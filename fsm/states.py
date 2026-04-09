@@ -7,8 +7,11 @@ class State(Enum):
     TAKEOFF = auto()                # Drone is taking off
     HOVER = auto()                  # Drone is hovering in place
     MANUAL = auto()                 # Drone is in manual control mode
-    FAIL = auto()                   # Drone has encountered a failure
-    ABORT_TAKEOFF = auto()          # Takeoff has been aborted
-    MOVE_CAMERA = auto()            # Drone is moving its camera
+    AUTONOMY = auto()               # Drone is in autonomous mode
+    FAILSAFE = auto()               # Drone is in failsafe mode due to an error or loss of signal
+    LAND = auto()                   # Drone is landing
+    RTL = auto()                    # Drone is returning to launch point
     
-    
+class Autonomy(Enum):
+    SEARCH = auto()                 # Drone is performing a search pattern
+    TRAVEL = auto()                 # Drone is traveling to a specific location
