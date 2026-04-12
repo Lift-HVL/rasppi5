@@ -1,0 +1,1 @@
+"""Search functionality for the autonomous drone."""

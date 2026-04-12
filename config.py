@@ -1,0 +1,13 @@
+# Connection parameters
+CONNECTION_STRING = '/dev/ttyAMA0'
+BAUDRATE = 57600
+
+# Flight parameters
+TAKEOFF_ALTITUDE = 10
+
+# Timing
+FSM_UPDATE_RATE = 0.05  # seconds
+
+# Safety
+LOW_BATTERY_THRESHOLD = 20
+CRITICAL_BATTERY_THRESHOLD = 10

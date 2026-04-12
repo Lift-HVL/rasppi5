@@ -1,0 +1,1 @@
+"""Camera sensor functionality for the autonomous drone."""

@@ -1,0 +1,1 @@
+"""Health monitoring functionality for the autonomous drone."""

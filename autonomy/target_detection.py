@@ -1,0 +1,1 @@
+"""Target detection functionality for the autonomous drone."""
