@@ -11,3 +11,6 @@ FSM_UPDATE_RATE = 0.05  # seconds
 # Safety
 LOW_BATTERY_THRESHOLD = 20
 CRITICAL_BATTERY_THRESHOLD = 10
+
+# Autonomy model
+YOLO_MODEL_PATH = 'models/yolo_model.pt'
