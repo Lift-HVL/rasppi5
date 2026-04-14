@@ -1,6 +1,7 @@
 # Connection parameters
 CONNECTION_STRING = '/dev/ttyAMA0'
 BAUDRATE = 57600
+LISTEN_PORT = 14550
 
 # Flight parameters
 TAKEOFF_ALTITUDE = 10
@@ -13,4 +14,4 @@ LOW_BATTERY_THRESHOLD = 20
 CRITICAL_BATTERY_THRESHOLD = 10
 
 # Autonomy model
-YOLO_MODEL_PATH = 'models/yolo_model.pt'
+YOLO_MODEL_PATH = 'yolov8m.pt'  # Path to the YOLO model for target detection
