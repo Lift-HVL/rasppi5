@@ -1,13 +1,14 @@
 # Connection parameters
-CONNECTION_STRING = '/dev/ttyAMA0'
+CONNECTION_STRING = 'udp:127.0.0.1:14551'
 BAUDRATE = 57600
-LISTEN_PORT = 14550
+LISTEN_PORT = 14551
 
 # Flight parameters
 TAKEOFF_ALTITUDE = 10
 
 # Timing
-FSM_UPDATE_RATE = 0.05  # seconds
+UPDATE_RATE = 1  # seconds
+YOLO_UPDATE_RATE = 0.2 # seconds
 
 # Safety
 LOW_BATTERY_THRESHOLD = 20

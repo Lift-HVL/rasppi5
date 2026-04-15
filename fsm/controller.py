@@ -1,9 +1,10 @@
-from states import State, Autonomy
-from event import Event
+from fsm.states import State, Autonomy
+from fsm.event import Event
 
 
 class FSMController:
-    def __init__(self):
+    def __init__(self, commands):
+        self.commands = commands
         self.current_state = State.BOOT
         self.next_state = self.current_state
         self.current_autonomy = None
