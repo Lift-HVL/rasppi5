@@ -79,14 +79,12 @@ class AutopilotCommands:
         """Rotate the drone at the given yaw rate (deg/s). Positive = clockwise."""
         import math
         yaw_rate_rad_s = math.radians(yaw_rate_deg_s)
-        # type_mask: ignore position, velocity, acceleration, yaw — use only yaw_rate
+        # ArduPilot may ignore yaw_rate-only targets. Keep velocity dimensions active
+        # (commanded as zero) and control yaw via yaw_rate.
         type_mask = (
             mavutil.mavlink.POSITION_TARGET_TYPEMASK_X_IGNORE |
             mavutil.mavlink.POSITION_TARGET_TYPEMASK_Y_IGNORE |
             mavutil.mavlink.POSITION_TARGET_TYPEMASK_Z_IGNORE |
-            mavutil.mavlink.POSITION_TARGET_TYPEMASK_VX_IGNORE |
-            mavutil.mavlink.POSITION_TARGET_TYPEMASK_VY_IGNORE |
-            mavutil.mavlink.POSITION_TARGET_TYPEMASK_VZ_IGNORE |
             mavutil.mavlink.POSITION_TARGET_TYPEMASK_AX_IGNORE |
             mavutil.mavlink.POSITION_TARGET_TYPEMASK_AY_IGNORE |
             mavutil.mavlink.POSITION_TARGET_TYPEMASK_AZ_IGNORE |

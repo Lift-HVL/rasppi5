@@ -11,9 +11,8 @@ class TargetTracker:
         """
         Rotate to center the detected target horizontally.
         Returns True when centered (or target lost).
+        Call after detector.update() has already been called this tick.
         """
-        self.detector.update() # Update target detection
-        
         if not self.detector.target_detected:
             self.commands.set_yaw_rate(0) # Stop rotation if no target
             return True
@@ -26,4 +25,5 @@ class TargetTracker:
         
         yaw_rate = max(-YAW_RATE_MAX, min(YAW_RATE_MAX, YAW_GAIN * pixel_error)) # Proportional control
         self.commands.set_yaw_rate(yaw_rate)
+        print("Yaw command sent!")
         return False

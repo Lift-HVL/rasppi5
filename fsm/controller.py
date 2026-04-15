@@ -78,6 +78,10 @@ class FSMController:
             case State.AUTONOMY:
                 if event == Event.START_SEARCH:
                     self.next_autonomy = Autonomy.SEARCH
+                elif event == Event.TARGET_ACQUIRED:
+                    self.next_autonomy = Autonomy.TRACK
+                elif event == Event.TARGET_LOST:
+                    self.next_autonomy = Autonomy.SEARCH
                 elif event == Event.START_TRAVEL:
                     self.next_autonomy = Autonomy.TRAVEL
                 elif event == Event.TASK_PAUSED:

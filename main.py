@@ -1,3 +1,5 @@
+import sys
+import os
 import time
 
 from autonomy.target_detection import TargetDetector
@@ -9,7 +11,7 @@ from autopilot.commands import AutopilotCommands
 
 from fsm.controller import FSMController
 from fsm.event_generator import EventGenerator
-from fsm.states import State
+from fsm.states import State, Autonomy
 
 from config import UPDATE_RATE
 
@@ -32,8 +34,9 @@ def main() -> None:
     # 5 - Event generator
     event_generator = EventGenerator()
 
-    # 6 - Target detector
+    # 6 - Target detector and tracker
     target_detector = TargetDetector()
+    tracker = TargetTracker(target_detector, commands)
 
     print("System initialized...")
 
@@ -65,13 +68,12 @@ def main() -> None:
         # ----------------------------------
         # 4 - Execute autonomy behaviour for current state
         # ----------------------------------
-        if fsm.current_state == State.AUTONOMY:
-            if fsm.current_autonomy == State.AUTONOMY.TRACK:
-                tracker = TargetTracker(target_detector, commands)
+        if target_detector.target_detected:
+            if vehicle_state.mode != "GUIDED":
+                commands.guided()
+            else:
                 tracker.update()
-        
-        if fsm.current_state == State.AUTONOMY and target_detector.target_detected:
-            print(f"Target detected at {target_detector.target_position} with confidence {target_detector.target_confidence:.2f}")
+            print(f"[TRACK] target={target_detector.target_position} error={target_detector.target_pixel_x - target_detector.center_x:.0f}px conf={target_detector.target_confidence:.2f}")
             
         # ----------------------------------
         # 5 - Debug output
