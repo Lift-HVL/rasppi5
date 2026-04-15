@@ -6,16 +6,19 @@ from config import CRITICAL_BATTERY_THRESHOLD, LOW_BATTERY_THRESHOLD, TAKEOFF_AL
 class EventGenerator:
     def __init__(self):
         self._prev_armed = False
+        self._prev_target_detected = False
 
-    def generate(self, vehicle_state, fsm):
-        event = self._generate(vehicle_state, fsm)
+    def generate(self, vehicle_state, fsm, target_detector=None):
+        event = self._generate(vehicle_state, fsm, target_detector)
 
         # Update tracked state after generating the event
         self._prev_armed = vehicle_state.armed
+        if target_detector is not None:
+            self._prev_target_detected = target_detector.target_detected
 
         return event
 
-    def _generate(self, vehicle_state, fsm):
+    def _generate(self, vehicle_state, fsm, target_detector):
         # 1 - Connection loss
         if vehicle_state.heartbeat_timeout():
             return Event.FAULT
@@ -50,5 +53,12 @@ class EventGenerator:
                 return Event.CRITICAL_FAULT
             elif vehicle_state.battery_remaining_pct <= LOW_BATTERY_THRESHOLD:
                 return Event.RECOVERABLE_FAULT
+
+        # 7 - Target detection (only relevant in AUTONOMY state)
+        if fsm.current_state == State.AUTONOMY and target_detector is not None:
+            if target_detector.target_detected and not self._prev_target_detected:
+                return Event.TARGET_ACQUIRED
+            if not target_detector.target_detected and self._prev_target_detected:
+                return Event.TARGET_LOST
 
         return None

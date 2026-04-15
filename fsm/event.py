@@ -23,4 +23,6 @@ class Event(Enum):
     CRITICAL_FAULT = auto()         # Critical fault detected, requires immediate attention
     RECOVERABLE_FAULT = auto()      # Fault detected that can be recovered from
     HOME_REACHED = auto()           # Home position reached during RTL
-    LANDED_DISARM = auto()          # Drone has landed andbeen disarmed
+    LANDED_DISARM = auto()          # Drone has landed and been disarmed
+    TARGET_ACQUIRED = auto()        # Target detected by vision system
+    TARGET_LOST = auto()            # Target no longer detected

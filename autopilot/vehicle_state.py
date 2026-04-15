@@ -81,4 +81,5 @@ class VehicleState:
         elif msg_type == "VFR_HUD":
             self.groundspeed_m_s = msg.groundspeed
             self.climb_rate_m_s = msg.climb
+            
     

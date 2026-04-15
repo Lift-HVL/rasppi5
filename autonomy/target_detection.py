@@ -12,12 +12,19 @@ class TargetDetector:
         
         self.target_detected = False # Flag to indicate if a target is currently detected
         self.target_confidence = 0.0 # Confidence score of the detected target
-        self.target_position = None # Position of the detected target in the frame ("left" / "right" / "center")
-        
+        self.target_position = () # Position of the detected target in the frame ("left" / "right" / "center")
+
+    
     def update(self):
         ret, frame = self.cap.read() # Read a frame from the camera
         if not ret:
             return
+        
+        height, width = frame.shape[:2]
+        center_x = width / 2
+        center_y = height / 2
+        
+        print(center_x, center_y)
         
         results = self.model(frame) # Run the YOLO model on the frame
         
@@ -34,13 +41,13 @@ class TargetDetector:
                 if conf > 0.8: # Only consider detections with confidence > 80% / filter weak detections
                     self.target_detected = True
                     x1, y1, x2, y2 = box.xyxy[0].tolist() # Get bounding box coordinates
-                    cx, cy = box.xywh[0][:2].tolist() # Get bounding box center coordinates
+                    self.target_position = box.xywh[0][:2].tolist() # Get bounding box center coordinates
                     
                     self.target_confidence = conf
                     
-                    if cx < frame.shape[1] / 3: # Target is on the left side of the frame
+                    if self.target_position[0] < frame.shape[1] / 3: # Target is on the left side of the frame
                         self.target_position = "left"
-                    elif cx > 2 * frame.shape[1] / 3: # Target is on the right side of the frame
+                    elif self.target_position[0] > 2 * frame.shape[1] / 3: # Target is on the right side of the frame
                         self.target_position = "right"
                     else: # Target is in the center of the frame
                         self.target_position = "center"
