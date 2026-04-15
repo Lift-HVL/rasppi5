@@ -15,3 +15,4 @@ class State(Enum):
 class Autonomy(Enum):
     SEARCH = auto()                 # Drone is performing a search pattern
     TRAVEL = auto()                 # Drone is traveling to a specific location
+    TRACK = auto()                  # Drone is tracking a detected target

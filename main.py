@@ -1,6 +1,7 @@
 import time
 
 from autonomy.target_detection import TargetDetector
+from autonomy.track import TargetTracker
 
 from autopilot.mavlink_client import MAVLinkClient
 from autopilot.vehicle_state import VehicleState
@@ -50,6 +51,7 @@ def main() -> None:
         # 2 - Update target detector
         # ----------------------------------
         target_detector.update()
+        target_detector.display()
 
         # ----------------------------------
         # 3 - Generate one high-level event from current data
@@ -63,11 +65,14 @@ def main() -> None:
         # ----------------------------------
         # 4 - Execute autonomy behaviour for current state
         # ----------------------------------
+        if fsm.current_state == State.AUTONOMY:
+            if fsm.current_autonomy == State.AUTONOMY.TRACK:
+                tracker = TargetTracker(target_detector, commands)
+                tracker.update()
+        
         if fsm.current_state == State.AUTONOMY and target_detector.target_detected:
-            if target_detector.target_detected:
-                print(f"Target detected at {target_detector.target_position} with confidence {target_detector.target_confidence:.2f}")
-                            
-
+            print(f"Target detected at {target_detector.target_position} with confidence {target_detector.target_confidence:.2f}")
+            
         # ----------------------------------
         # 5 - Debug output
         # ----------------------------------

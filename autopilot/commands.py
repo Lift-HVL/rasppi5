@@ -75,6 +75,35 @@ class AutopilotCommands:
         print("Switching to GUIDED...")
         self.set_mode("GUIDED")
 
+    def set_yaw_rate(self, yaw_rate_deg_s: float) -> None:
+        """Rotate the drone at the given yaw rate (deg/s). Positive = clockwise."""
+        import math
+        yaw_rate_rad_s = math.radians(yaw_rate_deg_s)
+        # type_mask: ignore position, velocity, acceleration, yaw — use only yaw_rate
+        type_mask = (
+            mavutil.mavlink.POSITION_TARGET_TYPEMASK_X_IGNORE |
+            mavutil.mavlink.POSITION_TARGET_TYPEMASK_Y_IGNORE |
+            mavutil.mavlink.POSITION_TARGET_TYPEMASK_Z_IGNORE |
+            mavutil.mavlink.POSITION_TARGET_TYPEMASK_VX_IGNORE |
+            mavutil.mavlink.POSITION_TARGET_TYPEMASK_VY_IGNORE |
+            mavutil.mavlink.POSITION_TARGET_TYPEMASK_VZ_IGNORE |
+            mavutil.mavlink.POSITION_TARGET_TYPEMASK_AX_IGNORE |
+            mavutil.mavlink.POSITION_TARGET_TYPEMASK_AY_IGNORE |
+            mavutil.mavlink.POSITION_TARGET_TYPEMASK_AZ_IGNORE |
+            mavutil.mavlink.POSITION_TARGET_TYPEMASK_YAW_IGNORE
+        )
+        self.master.mav.set_position_target_local_ned_send(
+            0,
+            self.master.target_system,
+            self.master.target_component,
+            mavutil.mavlink.MAV_FRAME_LOCAL_NED,
+            type_mask,
+            0, 0, 0,
+            0, 0, 0,
+            0, 0, 0,
+            0, yaw_rate_rad_s
+        )
+
     def move_velocity(self, north: float, east: float, down: float) -> None:
         self.master.mav.set_position_target_local_ned_send(
             0,
