@@ -21,6 +21,8 @@ CRITICAL_BATTERY_THRESHOLD = 10
 YOLO_MODEL_PATH = 'yolov8m.pt'  # Path to the YOLO model for target detection
 
 # Autonomy parameters
-YAW_RATE_MAX = 30.0     # deg/s - maximum rotation speed
-YAW_GAIN = 0.05         # deg/s per pixel of error
-YAW_DEADBAND = 20.0     # pixels - stop rotation when this close to center
+YAW_RATE_MAX = 30.0         # deg/s - maximum rotation speed
+YAW_GAIN = 0.05             # deg/s per pixel of error
+YAW_DEADBAND = 20.0         # pixels - stop rotation when this close to center
+FORWARD_SPEED = 1.5          # m/s - forward approach speed once target is centered
+BBOX_REACH_THRESHOLD = 0.4   # fraction of frame height the bbox must fill to be "within reach"

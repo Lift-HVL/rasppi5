@@ -102,6 +102,21 @@ class AutopilotCommands:
             0, yaw_rate_rad_s
         )
 
+    def set_forward_speed(self, speed: float) -> None:
+        """Move forward in the drone's body frame at given speed (m/s). Pass 0 to stop."""
+        type_mask = 0b0000111111000111  # velocity only, ignore position/acceleration/yaw
+        self.master.mav.set_position_target_local_ned_send(
+            0,
+            self.master.target_system,
+            self.master.target_component,
+            mavutil.mavlink.MAV_FRAME_BODY_NED,
+            type_mask,
+            0, 0, 0,
+            speed, 0, 0,
+            0, 0, 0,
+            0, 0
+        )
+
     def move_velocity(self, north: float, east: float, down: float) -> None:
         self.master.mav.set_position_target_local_ned_send(
             0,

@@ -16,6 +16,7 @@ class TargetDetector:
         self.target_confidence = 0.0 # Confidence score of the detected target
         self.target_position = () # Position of the detected target in the frame ("left" / "right" / "center")
         self.target_pixel_x = 0.0 # Actual pixel X coordinate of the detected target's center
+        self.target_bbox_height = 0.0 # Bounding box height in pixels (proxy for distance)
         self._last_frame = None # Most recent annotated frame for display
 
     def update(self):
@@ -42,8 +43,9 @@ class TargetDetector:
                 if conf > 0.8: # Only consider detections with confidence > 80% / filter weak detections
                     self.target_detected = True
                     self.target_confidence = conf
-                    cx, _ = box.xywh[0][:2].tolist() # Bounding box center in pixels
+                    cx, _, _, bh = box.xywh[0].tolist() # Bounding box center and dimensions in pixels
                     self.target_pixel_x = cx
+                    self.target_bbox_height = bh
 
                     if cx < frame.shape[1] / 3: # Target is on the left side of the frame
                         self.target_position = "left"
