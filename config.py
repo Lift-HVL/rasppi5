@@ -3,6 +3,9 @@ CONNECTION_STRING = 'udp:127.0.0.1:14551'
 BAUDRATE = 57600
 LISTEN_PORT = 14551
 
+# Camera parameters
+CAMERA_INDEX = 0  # Index of the camera to use (0 for default)
+
 # Flight parameters
 TAKEOFF_ALTITUDE = 10
 

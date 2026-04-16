@@ -2,13 +2,13 @@
 
 import cv2
 from ultralytics import YOLO
-from config import YOLO_MODEL_PATH
+from config import YOLO_MODEL_PATH, CAMERA_INDEX
 
 
 class TargetDetector:
     def __init__(self):
         self.model = YOLO(YOLO_MODEL_PATH) # Load the YOLO model for target detection
-        self.cap = cv2.VideoCapture(2) # Capture video from the default camera
+        self.cap = cv2.VideoCapture(CAMERA_INDEX) # Capture video from the default camera
         self.center_x = 0 # X coordinate of the center of the frame
         self.center_y = 0 # Y coordinate of the center of the frame
         
