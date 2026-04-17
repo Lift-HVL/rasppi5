@@ -1,5 +1,5 @@
 from fsm.event import Event
-from fsm.states import State
+from fsm.states import State, Autonomy
 from config import CRITICAL_BATTERY_THRESHOLD, LOW_BATTERY_THRESHOLD, TAKEOFF_ALTITUDE
 
 
@@ -54,10 +54,14 @@ class EventGenerator:
             elif vehicle_state.battery_remaining_pct <= LOW_BATTERY_THRESHOLD:
                 return Event.RECOVERABLE_FAULT
 
-        # 7 - Target detection (only relevant in AUTONOMY state)
-        if fsm.current_state == State.AUTONOMY and target_detector is not None:
+        # 7 - Target detection (only while actively searching)
+        if (
+            fsm.current_state == State.AUTONOMY
+            and fsm.current_autonomy == Autonomy.SEARCH
+            and target_detector is not None
+        ):
             if target_detector.target_detected and not self._prev_target_detected:
-                return Event.TARGET_ACQUIRED
+                return Event.START_TRACK
             if not target_detector.target_detected and self._prev_target_detected:
                 return Event.TARGET_LOST
 

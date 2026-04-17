@@ -16,6 +16,7 @@ YOLO_UPDATE_RATE = 0.2 # seconds
 # Safety
 LOW_BATTERY_THRESHOLD = 20
 CRITICAL_BATTERY_THRESHOLD = 10
+MIN_SATELLITES = 6
 
 # Autonomy model
 YOLO_MODEL_PATH = 'yolov8m.pt'  # Path to the YOLO model for target detection

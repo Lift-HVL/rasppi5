@@ -19,26 +19,29 @@
 
 ## Architecture
 
-The system runs a single control loop in `main.py` that ties three layers together at a fixed update rate (default 50 Hz):
+The system runs a single control loop in `main.py` that ties three layers together at a fixed update rate:
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
 │                           main.py                                │
 │                                                                  │
 │  ① Drain MAVLink buffer → update VehicleState                   │
-│  ② generate_event(vehicle_state, fsm) → FSM event               │
-│  ③ fsm.handle_event(event) → state transition + command         │
-│  ④ Sleep to maintain UPDATE_RATE                                 │
+│  ② Run YOLO detection + handle operator keypresses              │
+│  ③ generate_event(vehicle_state, fsm, detector) → FSM event     │
+│  ④ fsm.handle_event(event) → state transition                   │
+│  ⑤ Dispatch autonomy behaviour for current FSM sub-mode         │
+│  ⑥ Sleep to maintain UPDATE_RATE                                 │
 └───────────┬──────────────────┬──────────────────┬───────────────┘
             ▼                  ▼                  ▼
    ┌─────────────────┐  ┌────────────┐  ┌──────────────────┐
    │   autopilot/    │  │    fsm/    │  │    autonomy/     │
    │                 │  │            │  │                  │
    │ MAVLinkClient   │  │ Controller │  │ TargetDetector   │
-   │ VehicleState    │  │ States     │  │ search*          │
-   │ Commands        │  │ Events     │  │ travel*          │
-   └─────────────────┘  │ EventGen   │  │ planner*         │
-                        └────────────┘  └──────────────────┘
+   │ VehicleState    │  │ States     │  │ TargetTracker    │
+   │ Commands        │  │ Events     │  │ search*          │
+   └─────────────────┘  │ EventGen   │  │ travel*          │
+                        └────────────┘  │ planner*         │
+                                        └──────────────────┘
                                              sensors/
                                         camera*  health_monitor*
 
@@ -50,9 +53,11 @@ The system runs a single control loop in `main.py` that ties three layers togeth
 Each iteration of the loop in `main.py`:
 
 1. **Poll MAVLink** — drains all pending serial messages into `VehicleState` (non-blocking). Handles `HEARTBEAT`, `GLOBAL_POSITION_INT`, `GPS_RAW_INT`, `SYS_STATUS`, and `VFR_HUD`.
-2. **Generate event** — `event_generator.py` inspects `VehicleState` and the current FSM state to produce a single `Event` (heartbeat timeout → `FAULT`, boot + connected → `INIT_OK`, altitude reached → `ALTITUDE_REACHED`, battery thresholds → `CRITICAL_FAULT` / `RECOVERABLE_FAULT`).
-3. **Drive FSM** — the event is passed to `FSMController.handle_event()`, which transitions state and can trigger autopilot commands.
-4. **Timing** — `UPDATE_RATE` (default `0.05 s` = 20 Hz) keeps loop cadence stable.
+2. **Detect + input** — runs one YOLO frame via `TargetDetector.update()`, displays it in a window, and reads any keypress. Operator keys are translated directly into FSM events (see [Operator Controls](#operator-controls)).
+3. **Generate event** — `EventGenerator.generate()` inspects `VehicleState`, the current FSM state/sub-mode, and the detector to produce a single `Event` each tick. Priority order: connection fault → init → arm/disarm → altitude → landing → battery → target detection.
+4. **Drive FSM** — the event (if any) is passed to `FSMController.handle_event()`, which updates `current_state` and `current_autonomy`.
+5. **Dispatch autonomy** — if `current_state == AUTONOMY` and `current_autonomy == TRACK`, calls `TargetTracker.update()`. SEARCH and TRAVEL dispatch points are present but call stubs.
+6. **Timing** — `UPDATE_RATE` (default `1 s`) keeps loop cadence stable.
 
 ---
 
@@ -65,23 +70,31 @@ Each iteration of the loop in `main.py`:
                         └────────────┬─────────────────────┘
                                      │ INIT_OK
                                      ▼
-                                  STANDBY ◄──────────────────────┐
-                                     │ ARM                        │
-                                     ▼                            │
-                                   ARMED ──(DISARM)──────────────┘
+                                  STANDBY ◄──────────────────────────┐
+                                     │ ARM                            │
+                                     ▼                                │
+                                   ARMED ──(DISARM)──────────────────┘
                                      │ TAKEOFF_CMD
                                      ▼
                                   TAKEOFF ──(TAKEOFF_ABORT)──► LAND
                                      │ ALTITUDE_REACHED
                                      ▼
-             ┌──────────────────── HOVER ───────────────────────┐
-             │ START_SEARCH /           │ MANUAL_OVERRIDE        │ LAND
-             │ RESUME_SEARCH            ▼                        ▼
-             │                       MANUAL                    LAND
-             │ START_TRAVEL /          │ MANUAL_DONE             │ LANDED_DISARM
-             ▼                         └──────────► HOVER        ▼
-          AUTONOMY                                           STANDBY
-    (SEARCH / TRAVEL sub-mode)
+             ┌──────────────────── HOVER ──────────────────────────┐
+             │ START_SEARCH /           │ MANUAL_OVERRIDE           │ LAND
+             │ RESUME_SEARCH            ▼                           ▼
+             │                       MANUAL                       LAND
+             │ START_TRAVEL /          │ MANUAL_DONE               │ LANDED_DISARM
+             ▼                         └──────────► HOVER          ▼
+          AUTONOMY                                             STANDBY
+    ┌─────────────┐
+    │   SEARCH    │ ◄── START_SEARCH / TARGET_LOST
+    │             │
+    │   START_TRACK (target detected)
+    │             │
+    │   TRACK     │ ──── TargetTracker runs each tick
+    │             │      (yaw to center → advance → within reach)
+    │   TRAVEL    │ ◄── START_TRAVEL
+    └─────────────┘
              │ TASK_COMPLETED / TASK_PAUSED
              └──────────────────► HOVER
 
@@ -93,25 +106,66 @@ Each iteration of the loop in `main.py`:
 
 ### Events reference
 
-| Event | Trigger |
-|-------|---------|
-| `INIT_OK` | First heartbeat received after boot |
-| `INIT_FAIL` | Initialization error |
-| `ARM` / `DISARM` | Arming state change from telemetry |
-| `TAKEOFF_CMD` | Takeoff command issued |
-| `ALTITUDE_REACHED` | `altitude_relative_m ≥ TAKEOFF_ALTITUDE` |
-| `TAKEOFF_ABORT` | Takeoff sequence cancelled |
-| `START_SEARCH` / `RESUME_SEARCH` | Begin / resume area search |
-| `START_TRAVEL` / `RESUME_TRAVEL` | Begin / resume waypoint travel |
-| `TASK_COMPLETED` / `TASK_PAUSED` | Autonomy task ended or suspended |
-| `MANUAL_OVERRIDE` / `MANUAL_DONE` | Pilot takes / releases manual control |
-| `LAND` | Land command issued |
-| `LANDED_DISARM` | Drone on ground and disarmed |
-| `HOME_REACHED` | RTL home position reached |
-| `FAULT` | Heartbeat timeout |
-| `RECOVERABLE_FAULT` | Battery ≤ `LOW_BATTERY_THRESHOLD` (20 %) |
-| `CRITICAL_FAULT` | Battery ≤ `CRITICAL_BATTERY_THRESHOLD` (10 %) |
-| `RESET_ON_GND` | Manual ground reset |
+| Event | Source | Trigger |
+|-------|--------|---------|
+| `INIT_OK` | auto | First heartbeat received after boot |
+| `INIT_FAIL` | auto | Initialization error |
+| `ARM` / `DISARM` | auto | Arming state change from telemetry |
+| `TAKEOFF_CMD` | operator | Takeoff command issued |
+| `ALTITUDE_REACHED` | auto | `altitude_relative_m ≥ TAKEOFF_ALTITUDE` |
+| `TAKEOFF_ABORT` | operator | Takeoff sequence cancelled |
+| `START_SEARCH` | operator | `s` key while hovering |
+| `RESUME_SEARCH` | operator | Resume paused search |
+| `START_TRAVEL` / `RESUME_TRAVEL` | operator | Begin / resume waypoint travel |
+| `START_TRACK` | auto | Target detected while in `Autonomy.SEARCH` |
+| `RESUME_TRACK` | operator | Resume paused tracking |
+| `TARGET_LOST` | auto | Target disappears while in `Autonomy.SEARCH` |
+| `TASK_COMPLETED` / `TASK_PAUSED` | auto | Autonomy task ended or suspended |
+| `MANUAL_OVERRIDE` / `MANUAL_DONE` | auto | Pilot takes / releases manual control |
+| `LAND` | operator | `l` key |
+| `LANDED_DISARM` | auto | Drone on ground and disarmed |
+| `HOME_REACHED` | auto | RTL home position reached |
+| `FAULT` | auto | Heartbeat timeout |
+| `RECOVERABLE_FAULT` | auto | Battery ≤ `LOW_BATTERY_THRESHOLD` (20 %) |
+| `CRITICAL_FAULT` | auto | Battery ≤ `CRITICAL_BATTERY_THRESHOLD` (10 %) |
+| `RESET_ON_GND` | auto | Manual ground reset |
+
+---
+
+## Target Tracking
+
+`TargetTracker` in `autonomy/track.py` runs whenever `current_autonomy == Autonomy.TRACK`. It operates in two sequential phases each tick:
+
+```
+target_detected?
+    NO  → stop yaw + stop forward → return (done)
+    YES ↓
+
+pixel_error > YAW_DEADBAND?
+    YES → Phase 1: yaw toward target (proportional), hold position
+    NO  ↓
+
+Phase 2: target is centered
+    bbox_height / frame_height >= BBOX_REACH_THRESHOLD?
+        YES → stop forward → return True (target reached)
+        NO  → set_forward_speed(FORWARD_SPEED) → continue approaching
+```
+
+- **Yaw control** uses `set_yaw_rate()` with proportional gain (`YAW_GAIN`) clamped to `±YAW_RATE_MAX`.
+- **Forward control** uses `set_forward_speed()` in `MAV_FRAME_BODY_NED` so "forward" always means the drone's current nose direction.
+- **Proximity detection** uses bounding box height as a distance proxy — no rangefinder required. Tune `BBOX_REACH_THRESHOLD` to match the desired stop distance.
+
+---
+
+## Operator Controls
+
+Controls are read from the OpenCV camera window each loop tick. The window must have focus for keypresses to register.
+
+| Key | Action | Condition |
+|-----|--------|-----------|
+| `s` | Start search (`START_SEARCH`) | FSM must be in `HOVER` |
+| `l` | Land (`LAND`) | Any state |
+| `q` | Quit cleanly | Any state |
 
 ---
 
@@ -122,20 +176,22 @@ rasppi5/
 │
 ├── main.py                      # Entry point & main control loop
 ├── config.py                    # All tunable parameters
+├── requirements.txt             # Python dependencies
 │
 ├── autopilot/                   # MAVLink drone interface
 │   ├── mavlink_client.py        # Serial connection + non-blocking message polling
 │   ├── vehicle_state.py         # Live telemetry dataclass (GPS, battery, altitude…)
-│   └── commands.py              # Flight commands: arm, takeoff, land, move (NED velocity)
+│   └── commands.py              # Flight commands: arm, takeoff, land, yaw, velocity
 │
 ├── fsm/                         # Finite State Machine
 │   ├── controller.py            # FSMController — all state transitions
 │   ├── states.py                # State and Autonomy enums
 │   ├── event.py                 # Event enum (all FSM triggers)
-│   └── event_generator.py      # Maps live VehicleState → Event each loop tick
+│   └── event_generator.py      # Maps live VehicleState + detector → Event each tick
 │
 ├── autonomy/                    # Autonomous behaviours
 │   ├── target_detection.py      # YOLOv8 real-time detection pipeline (working)
+│   ├── track.py                 # Two-phase target tracker: yaw to center → advance (working)
 │   ├── search.py                # Area search pattern (stub)
 │   ├── travel.py                # Waypoint navigation (stub)
 │   └── planner.py               # Mission sequencer (stub)
@@ -160,12 +216,19 @@ All tunable values live in `config.py`:
 | `CONNECTION_STRING` | `/dev/ttyAMA0` | UART serial port to flight controller |
 | `BAUDRATE` | `57600` | MAVLink baud rate |
 | `LISTEN_PORT` | `14550` | UDP listen port (GCS / SITL) |
+| `CAMERA_INDEX` | `0` | OpenCV camera index |
 | `TAKEOFF_ALTITUDE` | `10` | Target takeoff altitude (metres) |
-| `UPDATE_RATE` | `0.05` | Main loop period in seconds (20 Hz) |
+| `UPDATE_RATE` | `1` | Main loop period in seconds |
+| `YOLO_UPDATE_RATE` | `0.2` | Target detection interval in seconds (5 Hz) |
 | `LOW_BATTERY_THRESHOLD` | `20` | Battery % that triggers `RECOVERABLE_FAULT` |
 | `CRITICAL_BATTERY_THRESHOLD` | `10` | Battery % that triggers `CRITICAL_FAULT` |
 | `YOLO_MODEL_PATH` | `yolov8m.pt` | YOLO model file |
-| `YOLO_UPDATE_RATE` | `0.2` | Target detection interval in seconds (5 Hz) |
+| `YAW_RATE_MAX` | `30.0` | Maximum yaw rate (deg/s) |
+| `YAW_GAIN` | `0.05` | Proportional gain: deg/s per pixel of error |
+| `YAW_DEADBAND` | `20.0` | Pixel error below which yaw stops |
+| `FORWARD_SPEED` | `1.5` | Approach speed once target is centered (m/s) |
+| `BBOX_REACH_THRESHOLD` | `0.4` | Bounding box height fraction that means "within reach" |
+| `DISTANCE_THRESHOLD` | `10.0` | Reserved for rangefinder-based proximity (metres) |
 
 ---
 
@@ -174,7 +237,7 @@ All tunable values live in `config.py`:
 **1. Install dependencies**
 
 ```bash
-pip install pymavlink pyserial ultralytics opencv-python
+pip install -r requirements.txt
 ```
 
 **2. Configure connection** in `config.py`
@@ -192,7 +255,7 @@ YOLO_MODEL_PATH   = 'yolov8m.pt'    # or 'my_model.pt'
 python main.py
 ```
 
-Press `Ctrl+C` to shut down cleanly.
+Press `Ctrl+C` or `q` in the camera window to shut down cleanly.
 
 ---
 
@@ -225,18 +288,22 @@ Press `Ctrl+C` to shut down cleanly.
 - [x] `event_generator.py` maps vehicle state to FSM events each tick
 
 ### Phase 2 — Autonomy behaviours
-- [ ] Connect target detection output to FSM events
+- [x] `START_TRACK` event auto-generated when target appears during `Autonomy.SEARCH`
+- [x] `TARGET_LOST` event auto-generated when target disappears during `Autonomy.SEARCH`
+- [x] `track.py` — `TargetTracker` yaws to center, then advances until `BBOX_REACH_THRESHOLD`
+- [x] FSM autonomy dispatch in `main.py` — branches on `fsm.current_autonomy`
+- [x] Operator keyboard input — `s` starts search, `l` lands, `q` quits
 - [ ] Implement `search.py` — area search pattern (e.g. lawnmower / spiral)
 - [ ] Implement `travel.py` — waypoint navigation to a GPS target
-- [ ] Implement `planner.py` — mission sequencing (search → travel → land)
+- [ ] Implement `planner.py` — mission sequencing (search → track → task complete)
 
 ### Phase 3 — Sensors & safety
+- [ ] Implement `health_monitor.py` — GPS fix and EKF health checks → emit `FAULT` events
 - [ ] Implement `camera.py` — abstract camera interface (USB / CSI / RTSP)
-- [ ] Implement `health_monitor.py` — heartbeat timeout, GPS, EKF checks → emit `FAULT` events
 - [ ] Add geofence / safe-zone enforcement
 
 ### Phase 4 — Polish & reliability
-- [ ] Replace hardcoded frame width (1000 px) in `target_detection.py` with dynamic `cap.get()`
-- [ ] Add `requirements.txt`
+- [x] Dynamic frame dimensions in `target_detection.py` (uses `frame.shape`)
+- [x] Add `requirements.txt`
 - [ ] Add SITL test setup (ArduPilot SITL + MAVProxy)
 - [ ] Replace bare `print()` calls with a structured logging system

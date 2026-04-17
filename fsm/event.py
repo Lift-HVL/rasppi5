@@ -14,6 +14,8 @@ class Event(Enum):
     TASK_PAUSED = auto()            # Command to pause current task
     RESUME_SEARCH = auto()          # Command to resume paused search
     RESUME_TRAVEL = auto()          # Command to resume paused travel
+    START_TRACK = auto()            # Command to start target tracking
+    RESUME_TRACK = auto()           # Command to resume target tracking
     TASK_COMPLETED = auto()         # Current task completed
     MANUAL_OVERRIDE = auto()        # Manual override activated
     MANUAL_DONE = auto()            # Manual control completed

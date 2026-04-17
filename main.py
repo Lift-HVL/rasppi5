@@ -11,6 +11,7 @@ from autopilot.commands import AutopilotCommands
 
 from fsm.controller import FSMController
 from fsm.event_generator import EventGenerator
+from fsm.event import Event
 from fsm.states import State, Autonomy
 
 from config import UPDATE_RATE
@@ -51,10 +52,19 @@ def main() -> None:
             processed_count += 1
 
         # ----------------------------------
-        # 2 - Update target detector
+        # 2 - Update target detector + handle operator keypresses
         # ----------------------------------
         target_detector.update()
-        target_detector.display()
+        key = target_detector.display()
+
+        if key == ord('q'):
+            break
+        elif key == ord('s') and fsm.current_state == State.HOVER:
+            print("[INPUT] START_SEARCH")
+            fsm.handle_event(Event.START_SEARCH)
+        elif key == ord('l'):
+            print("[INPUT] LAND")
+            fsm.handle_event(Event.LAND)
 
         # ----------------------------------
         # 3 - Generate one high-level event from current data
@@ -68,8 +78,8 @@ def main() -> None:
         # ----------------------------------
         # 4 - Execute autonomy behaviour for current state
         # ----------------------------------
-        if target_detector.target_detected:
-            if vehicle_state.mode != "GUIDED":
+        if target_detector.target_detected and fsm.current_state == State.AUTONOMY and fsm.current_autonomy == Autonomy.TRACK:
+            if vehicle_state.mode != "GUIDED":  
                 commands.guided()
             else:
                 tracker.update()

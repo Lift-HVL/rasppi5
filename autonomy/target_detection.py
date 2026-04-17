@@ -3,12 +3,12 @@
 import cv2
 from ultralytics import YOLO
 from config import YOLO_MODEL_PATH, CAMERA_INDEX
-
+from sensors.camera import Camera
 
 class TargetDetector:
-    def __init__(self):
+    def __init__(self, Camera):
         self.model = YOLO(YOLO_MODEL_PATH) # Load the YOLO model for target detection
-        self.cap = cv2.VideoCapture(CAMERA_INDEX) # Capture video from the default camera
+        self.cap = Camera(CAMERA_INDEX) # Capture video from the default camera
         self.center_x = 0 # X coordinate of the center of the frame
         self.center_y = 0 # Y coordinate of the center of the frame
         
@@ -62,12 +62,12 @@ class TargetDetector:
 
         self._last_frame = frame
 
-    def display(self) -> bool:
-        """Show the latest frame. Returns False if the window was closed (q key)."""
+    def display(self) -> int:
+        """Show the latest frame. Returns the key pressed (0xFF masked), or -1 if no frame."""
         if self._last_frame is None:
-            return True
+            return -1
         cv2.imshow("Target Detection", self._last_frame)
-        return cv2.waitKey(1) & 0xFF != ord('q')
+        return cv2.waitKey(1) & 0xFF
 
     def release(self):
         self.cap.release() # Release the video capture object

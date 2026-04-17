@@ -82,4 +82,7 @@ class VehicleState:
             self.groundspeed_m_s = msg.groundspeed
             self.climb_rate_m_s = msg.climb
             
+        elif msg_type == "EKF_STATUS_REPORT":
+            flags = msg.flags
+            self.ekf_ok = bool(flags & 0x1F == 0x1F)  # Check if all EKF status flags are set (0b11111)
     

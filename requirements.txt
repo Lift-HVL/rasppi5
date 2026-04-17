@@ -1,0 +1,4 @@
+pymavlink
+pyserial
+ultralytics
+opencv-python
