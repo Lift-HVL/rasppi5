@@ -1,3 +1,4 @@
+from logging import Logger
 import sys
 import os
 import time
@@ -38,6 +39,9 @@ def main() -> None:
     # 6 - Target detector and tracker
     target_detector = TargetDetector()
     tracker = TargetTracker(target_detector, commands)
+
+    # 7 - Logger
+    logger = Logger()
 
     print("System initialized...")
 
@@ -100,6 +104,8 @@ def main() -> None:
             f"target = {target_detector.target_position if target_detector.target_detected else 'None'} \n"
             f"msgs = {processed_count}"
         )
+
+        logger.log_iteration(vehicle_state, fsm, target_detector)
 
         # ----------------------------------
         # 6 - Keep loop timing stable

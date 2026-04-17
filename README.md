@@ -39,11 +39,10 @@ The system runs a single control loop in `main.py` that ties three layers togeth
    │ MAVLinkClient   │  │ Controller │  │ TargetDetector   │
    │ VehicleState    │  │ States     │  │ TargetTracker    │
    │ Commands        │  │ Events     │  │ search*          │
-   └─────────────────┘  │ EventGen   │  │ travel*          │
-                        └────────────┘  │ planner*         │
-                                        └──────────────────┘
+   └─────────────────┘  │ EventGen   │  └──────────────────┘
+                        └────────────┘
                                              sensors/
-                                        camera*  health_monitor*
+                                        camera  health_monitor
 
 * = stub, not yet implemented
 ```
@@ -83,7 +82,7 @@ Each iteration of the loop in `main.py`:
              │ START_SEARCH /           │ MANUAL_OVERRIDE           │ LAND
              │ RESUME_SEARCH            ▼                           ▼
              │                       MANUAL                       LAND
-             │ START_TRAVEL /          │ MANUAL_DONE               │ LANDED_DISARM
+             │                         │ MANUAL_DONE               │ LANDED_DISARM
              ▼                         └──────────► HOVER          ▼
           AUTONOMY                                             STANDBY
     ┌─────────────┐
@@ -93,7 +92,6 @@ Each iteration of the loop in `main.py`:
     │             │
     │   TRACK     │ ──── TargetTracker runs each tick
     │             │      (yaw to center → advance → within reach)
-    │   TRAVEL    │ ◄── START_TRAVEL
     └─────────────┘
              │ TASK_COMPLETED / TASK_PAUSED
              └──────────────────► HOVER
@@ -190,15 +188,13 @@ rasppi5/
 │   └── event_generator.py      # Maps live VehicleState + detector → Event each tick
 │
 ├── autonomy/                    # Autonomous behaviours
-│   ├── target_detection.py      # YOLOv8 real-time detection pipeline (working)
-│   ├── track.py                 # Two-phase target tracker: yaw to center → advance (working)
-│   ├── search.py                # Area search pattern (stub)
-│   ├── travel.py                # Waypoint navigation (stub)
-│   └── planner.py               # Mission sequencer (stub)
+│   ├── target_detection.py      # YOLOv8 real-time detection pipeline
+│   ├── track.py                 # Two-phase target tracker: yaw to center → advance
+│   └── search.py                # Area search pattern (stub)
 │
-├── sensors/                     # Sensor interfaces (stubs)
-│   ├── camera.py                # Camera abstraction (stub)
-│   └── health_monitor.py        # EKF / GPS / heartbeat checks (stub)
+├── sensors/                     # Sensor interfaces 
+│   ├── camera.py                # Camera abstraction
+│   └── health_monitor.py        # EKF / GPS / heartbeat checks
 │
 └── models/                      # ML model weights
     ├── yolov8m.pt               # YOLOv8 medium (base)
@@ -222,7 +218,7 @@ All tunable values live in `config.py`:
 | `YOLO_UPDATE_RATE` | `0.2` | Target detection interval in seconds (5 Hz) |
 | `LOW_BATTERY_THRESHOLD` | `20` | Battery % that triggers `RECOVERABLE_FAULT` |
 | `CRITICAL_BATTERY_THRESHOLD` | `10` | Battery % that triggers `CRITICAL_FAULT` |
-| `YOLO_MODEL_PATH` | `yolov8m.pt` | YOLO model file |
+| `YOLO_MODEL_PATH` | `models/yolov8m.pt` | YOLO model file |
 | `YAW_RATE_MAX` | `30.0` | Maximum yaw rate (deg/s) |
 | `YAW_GAIN` | `0.05` | Proportional gain: deg/s per pixel of error |
 | `YAW_DEADBAND` | `20.0` | Pixel error below which yaw stops |
@@ -246,7 +242,7 @@ pip install -r requirements.txt
 CONNECTION_STRING = '/dev/ttyAMA0'   # UART port to flight controller
 BAUDRATE          = 57600
 TAKEOFF_ALTITUDE  = 10               # metres
-YOLO_MODEL_PATH   = 'yolov8m.pt'    # or 'my_model.pt'
+YOLO_MODEL_PATH   = 'models/yolov8m.pt'    # or 'my_model.pt'
 ```
 
 **3. Run**
@@ -294,16 +290,12 @@ Press `Ctrl+C` or `q` in the camera window to shut down cleanly.
 - [x] FSM autonomy dispatch in `main.py` — branches on `fsm.current_autonomy`
 - [x] Operator keyboard input — `s` starts search, `l` lands, `q` quits
 - [ ] Implement `search.py` — area search pattern (e.g. lawnmower / spiral)
-- [ ] Implement `travel.py` — waypoint navigation to a GPS target
-- [ ] Implement `planner.py` — mission sequencing (search → track → task complete)
 
 ### Phase 3 — Sensors & safety
-- [ ] Implement `health_monitor.py` — GPS fix and EKF health checks → emit `FAULT` events
-- [ ] Implement `camera.py` — abstract camera interface (USB / CSI / RTSP)
-- [ ] Add geofence / safe-zone enforcement
+- [x] Implement `health_monitor.py` — GPS fix and EKF health checks → emit `FAULT` events
+- [x] Implement `camera.py` — abstract camera interface (USB / CSI / RTSP)
 
 ### Phase 4 — Polish & reliability
 - [x] Dynamic frame dimensions in `target_detection.py` (uses `frame.shape`)
 - [x] Add `requirements.txt`
-- [ ] Add SITL test setup (ArduPilot SITL + MAVProxy)
-- [ ] Replace bare `print()` calls with a structured logging system
+- [x] Replace bare `print()` calls with a structured logging system

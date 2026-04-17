@@ -1,1 +1,0 @@
-"""Planner functionality for the autonomous drone."""
