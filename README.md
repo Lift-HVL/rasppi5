@@ -278,24 +278,7 @@ Press `Ctrl+C` or `q` in the camera window to shut down cleanly.
 
 ## Roadmap
 
-### Phase 1 — Core integration ✅
-- [x] Wire `FSMController` and `MAVLinkClient` into `main.py`
-- [x] Drive FSM transitions from live MAVLink telemetry (battery, GPS, heartbeat)
-- [x] `event_generator.py` maps vehicle state to FSM events each tick
-
-### Phase 2 — Autonomy behaviours
-- [x] `START_TRACK` event auto-generated when target appears during `Autonomy.SEARCH`
-- [x] `TARGET_LOST` event auto-generated when target disappears during `Autonomy.SEARCH`
-- [x] `track.py` — `TargetTracker` yaws to center, then advances until `BBOX_REACH_THRESHOLD`
-- [x] FSM autonomy dispatch in `main.py` — branches on `fsm.current_autonomy`
-- [x] Operator keyboard input — `s` starts search, `l` lands, `q` quits
 - [ ] Implement `search.py` — area search pattern (e.g. lawnmower / spiral)
+- Tweak `track.py` - divide the captured frame into several cells and give speeds accordingly. (Frame closer to center returns less speed towards the center, than a frame on the edge).
 
-### Phase 3 — Sensors & safety
-- [x] Implement `health_monitor.py` — GPS fix and EKF health checks → emit `FAULT` events
-- [x] Implement `camera.py` — abstract camera interface (USB / CSI / RTSP)
 
-### Phase 4 — Polish & reliability
-- [x] Dynamic frame dimensions in `target_detection.py` (uses `frame.shape`)
-- [x] Add `requirements.txt`
-- [x] Replace bare `print()` calls with a structured logging system
