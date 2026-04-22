@@ -62,12 +62,12 @@ class TargetDetector:
 
         self._last_frame = frame
 
-    def display(self) -> int:
-        """Show the latest frame. Returns the key pressed (0xFF masked), or -1 if no frame."""
+    def display(self) -> None:
+        """Show the latest frame. Must be called each tick to keep the window responsive."""
         if self._last_frame is None:
-            return -1
+            return
         cv2.imshow("Target Detection", self._last_frame)
-        return cv2.waitKey(1) & 0xFF
+        cv2.waitKey(1)
 
     def release(self):
         self.cap.release() # Release the video capture object

@@ -1,5 +1,5 @@
 from pymavlink import mavutil
-from config import CONNECTION_STRING, BAUDRATE
+from config import CONNECTION_STRING, BAUDRATE, CONNECTION_TIMEOUT
 
 class MAVLinkClient:
     def __init__(self):
@@ -8,10 +8,17 @@ class MAVLinkClient:
             baud=BAUDRATE,
         )
 
-    def wait_heartbeat(self):
-        """Wait for a heartbeat from the autopilot."""
-        self.master.wait_heartbeat()
+    def wait_heartbeat(self, timeout: float = CONNECTION_TIMEOUT) -> bool:
+        """Wait for a heartbeat from the autopilot.
+
+        Returns True if connected, False if timed out.
+        """
+        msg = self.master.recv_match(type='HEARTBEAT', blocking=True, timeout=timeout)
+        if msg is None:
+            print("No heartbeat received — running without autopilot connection")
+            return False
         print("Heartbeat received from autopilot")
+        return True
 
     def update_vehicle_state(self, state) -> bool:
         """Read one pending MAVLink message and apply it to a VehicleState.

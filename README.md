@@ -26,11 +26,12 @@ The system runs a single control loop in `main.py` that ties three layers togeth
 │                           main.py                                │
 │                                                                  │
 │  ① Drain MAVLink buffer → update VehicleState                   │
-│  ② Run YOLO detection + handle operator keypresses              │
-│  ③ generate_event(vehicle_state, fsm, detector) → FSM event     │
-│  ④ fsm.handle_event(event) → state transition                   │
-│  ⑤ Dispatch autonomy behaviour for current FSM sub-mode         │
-│  ⑥ Sleep to maintain UPDATE_RATE                                 │
+│  ② Run YOLO detection + display camera frame                    │
+│  ③ Read terminal keypress → operator FSM events                 │
+│  ④ generate_event(vehicle_state, fsm, detector) → FSM event     │
+│  ⑤ fsm.handle_event(event) → state transition                   │
+│  ⑥ Dispatch autonomy behaviour for current FSM sub-mode         │
+│  ⑦ Log iteration + sleep to maintain UPDATE_RATE                │
 └───────────┬──────────────────┬──────────────────┬───────────────┘
             ▼                  ▼                  ▼
    ┌─────────────────┐  ┌────────────┐  ┌──────────────────┐
@@ -38,25 +39,26 @@ The system runs a single control loop in `main.py` that ties three layers togeth
    │                 │  │            │  │                  │
    │ MAVLinkClient   │  │ Controller │  │ TargetDetector   │
    │ VehicleState    │  │ States     │  │ TargetTracker    │
-   │ Commands        │  │ Events     │  │ search*          │
+   │ Commands        │  │ Events     │  │ Search*          │
    └─────────────────┘  │ EventGen   │  └──────────────────┘
                         └────────────┘
-                                             sensors/
-                                        camera  health_monitor
+                             sensors/           utils/
+                        Camera  HealthMonitor  Logger  KeyboardListener
 
-* = stub, not yet implemented
+* = in progress
 ```
 
 ### Main loop detail
 
 Each iteration of the loop in `main.py`:
 
-1. **Poll MAVLink** — drains all pending serial messages into `VehicleState` (non-blocking). Handles `HEARTBEAT`, `GLOBAL_POSITION_INT`, `GPS_RAW_INT`, `SYS_STATUS`, and `VFR_HUD`.
-2. **Detect + input** — runs one YOLO frame via `TargetDetector.update()`, displays it in a window, and reads any keypress. Operator keys are translated directly into FSM events (see [Operator Controls](#operator-controls)).
-3. **Generate event** — `EventGenerator.generate()` inspects `VehicleState`, the current FSM state/sub-mode, and the detector to produce a single `Event` each tick. Priority order: connection fault → init → arm/disarm → altitude → landing → battery → target detection.
-4. **Drive FSM** — the event (if any) is passed to `FSMController.handle_event()`, which updates `current_state` and `current_autonomy`.
-5. **Dispatch autonomy** — if `current_state == AUTONOMY` and `current_autonomy == TRACK`, calls `TargetTracker.update()`. SEARCH and TRAVEL dispatch points are present but call stubs.
-6. **Timing** — `UPDATE_RATE` (default `1 s`) keeps loop cadence stable.
+1. **Poll MAVLink** — drains all pending serial messages into `VehicleState` (non-blocking). Handles `HEARTBEAT`, `GLOBAL_POSITION_INT`, `GPS_RAW_INT`, `SYS_STATUS`, `VFR_HUD`, and `EKF_STATUS_REPORT`.
+2. **Detect** — runs one YOLO frame via `TargetDetector.update()` and displays the annotated frame in an OpenCV window.
+3. **Operator input** — `KeyboardListener` reads single keypresses from the terminal (non-blocking). Keys are mapped directly to FSM events (see [Operator Controls](#operator-controls)).
+4. **Generate event** — `EventGenerator.generate()` inspects `VehicleState`, the current FSM state/sub-mode, and the detector to produce a single `Event` each tick. Priority order: connection fault → init → arm/disarm → altitude → landing → battery → GPS/EKF health → target detection.
+5. **Drive FSM** — the event (if any) is passed to `FSMController.handle_event()`, which updates `current_state` and `current_autonomy`.
+6. **Dispatch autonomy** — branches on `fsm.current_autonomy`: `TRACK` calls `TargetTracker.update()` and fires `TASK_COMPLETED` when target is reached; `SEARCH` dispatch is wired but awaits `search.py` implementation.
+7. **Log + sleep** — `Logger` writes a timestamped status line to file, then sleeps to maintain `UPDATE_RATE`.
 
 ---
 
@@ -91,7 +93,7 @@ Each iteration of the loop in `main.py`:
     │   START_TRACK (target detected)
     │             │
     │   TRACK     │ ──── TargetTracker runs each tick
-    │             │      (yaw to center → advance → within reach)
+    │             │      (PI yaw to center → advance → within reach → TASK_COMPLETED)
     └─────────────┘
              │ TASK_COMPLETED / TASK_PAUSED
              └──────────────────► HOVER
@@ -112,58 +114,73 @@ Each iteration of the loop in `main.py`:
 | `TAKEOFF_CMD` | operator | Takeoff command issued |
 | `ALTITUDE_REACHED` | auto | `altitude_relative_m ≥ TAKEOFF_ALTITUDE` |
 | `TAKEOFF_ABORT` | operator | Takeoff sequence cancelled |
-| `START_SEARCH` | operator | `s` key while hovering |
+| `START_SEARCH` | operator | `s` key while in `HOVER` |
 | `RESUME_SEARCH` | operator | Resume paused search |
-| `START_TRAVEL` / `RESUME_TRAVEL` | operator | Begin / resume waypoint travel |
 | `START_TRACK` | auto | Target detected while in `Autonomy.SEARCH` |
 | `RESUME_TRACK` | operator | Resume paused tracking |
-| `TARGET_LOST` | auto | Target disappears while in `Autonomy.SEARCH` |
-| `TASK_COMPLETED` / `TASK_PAUSED` | auto | Autonomy task ended or suspended |
+| `TARGET_LOST` | auto | Target disappears while in `Autonomy.SEARCH` or `Autonomy.TRACK` |
+| `TASK_COMPLETED` | auto | Target reached (`TargetTracker.update()` returns `True`) |
+| `TASK_PAUSED` | operator | Autonomy task suspended |
 | `MANUAL_OVERRIDE` / `MANUAL_DONE` | auto | Pilot takes / releases manual control |
 | `LAND` | operator | `l` key |
 | `LANDED_DISARM` | auto | Drone on ground and disarmed |
 | `HOME_REACHED` | auto | RTL home position reached |
-| `FAULT` | auto | Heartbeat timeout |
+| `FAULT` | auto | Heartbeat timeout, GPS loss, or EKF failure |
 | `RECOVERABLE_FAULT` | auto | Battery ≤ `LOW_BATTERY_THRESHOLD` (20 %) |
 | `CRITICAL_FAULT` | auto | Battery ≤ `CRITICAL_BATTERY_THRESHOLD` (10 %) |
-| `RESET_ON_GND` | auto | Manual ground reset |
+| `RESET_ON_GND` | operator | `r` key while in `FAILSAFE` |
 
 ---
 
 ## Target Tracking
 
-`TargetTracker` in `autonomy/track.py` runs whenever `current_autonomy == Autonomy.TRACK`. It operates in two sequential phases each tick:
+`TargetTracker` in `autonomy/track.py` runs whenever `current_autonomy == Autonomy.TRACK`. It operates in two sequential phases each tick, with a PI regulator controlling yaw:
 
 ```
 target_detected?
-    NO  → stop yaw + stop forward → return (done)
+    NO  → reset PI state, stop yaw + forward → return True (done)
     YES ↓
 
 pixel_error > YAW_DEADBAND?
-    YES → Phase 1: yaw toward target (proportional), hold position
+    YES → Phase 1: PI yaw toward target, hold position
     NO  ↓
 
 Phase 2: target is centered
     bbox_height / frame_height >= BBOX_REACH_THRESHOLD?
-        YES → stop forward → return True (target reached)
+        YES → stop forward → return True (target reached → TASK_COMPLETED)
         NO  → set_forward_speed(FORWARD_SPEED) → continue approaching
 ```
 
-- **Yaw control** uses `set_yaw_rate()` with proportional gain (`YAW_GAIN`) clamped to `±YAW_RATE_MAX`.
-- **Forward control** uses `set_forward_speed()` in `MAV_FRAME_BODY_NED` so "forward" always means the drone's current nose direction.
-- **Proximity detection** uses bounding box height as a distance proxy — no rangefinder required. Tune `BBOX_REACH_THRESHOLD` to match the desired stop distance.
+**PI regulator:**
+- Output = `YAW_KP × pixel_error + YAW_KI × integral`
+- Integral accumulates `pixel_error × dt` each tick, clamped to `±YAW_INTEGRAL_MAX` (anti-windup)
+- Integral and timer reset to zero when target is lost, preventing stale error from affecting the next sighting
+- Output clamped to `±YAW_RATE_MAX`
+
+**Forward control** uses `set_forward_speed()` with `MAV_FRAME_BODY_NED` so "forward" always means the drone's current nose direction regardless of heading.
+
+**Proximity detection** uses bounding box height as a distance proxy — no rangefinder required. Tune `BBOX_REACH_THRESHOLD` to match the desired stop distance.
 
 ---
 
 ## Operator Controls
 
-Controls are read from the OpenCV camera window each loop tick. The window must have focus for keypresses to register.
+Controls are read from the **terminal window** each loop tick via `KeyboardListener` (no need to focus the camera window).
 
 | Key | Action | Condition |
 |-----|--------|-----------|
 | `s` | Start search (`START_SEARCH`) | FSM must be in `HOVER` |
 | `l` | Land (`LAND`) | Any state |
+| `r` | Reset from failsafe (`RESET_ON_GND`) | FSM must be in `FAILSAFE` |
 | `q` | Quit cleanly | Any state |
+
+### Connecting to SITL after startup
+
+If no autopilot connection is found at startup, the system continues running without one (times out after `CONNECTION_TIMEOUT` seconds). When SITL is started later:
+
+1. Heartbeats arrive automatically — `vehicle_state.connected` becomes `True`
+2. Press `r` in the terminal → FSM resets from `FAILSAFE` to `STANDBY`
+3. Arm, takeoff, and fly normally from there
 
 ---
 
@@ -177,24 +194,28 @@ rasppi5/
 ├── requirements.txt             # Python dependencies
 │
 ├── autopilot/                   # MAVLink drone interface
-│   ├── mavlink_client.py        # Serial connection + non-blocking message polling
-│   ├── vehicle_state.py         # Live telemetry dataclass (GPS, battery, altitude…)
+│   ├── mavlink_client.py        # Connection with configurable heartbeat timeout
+│   ├── vehicle_state.py         # Live telemetry dataclass (GPS, battery, EKF, altitude…)
 │   └── commands.py              # Flight commands: arm, takeoff, land, yaw, velocity
 │
 ├── fsm/                         # Finite State Machine
 │   ├── controller.py            # FSMController — all state transitions
 │   ├── states.py                # State and Autonomy enums
 │   ├── event.py                 # Event enum (all FSM triggers)
-│   └── event_generator.py      # Maps live VehicleState + detector → Event each tick
+│   └── event_generator.py       # Maps VehicleState + detector + health → Event each tick
 │
 ├── autonomy/                    # Autonomous behaviours
 │   ├── target_detection.py      # YOLOv8 real-time detection pipeline
-│   ├── track.py                 # Two-phase target tracker: yaw to center → advance
-│   └── search.py                # Area search pattern (stub)
+│   ├── track.py                 # PI-regulated target tracker: yaw to center → advance
+│   └── search.py                # Lawnmower search pattern (in progress)
 │
-├── sensors/                     # Sensor interfaces 
-│   ├── camera.py                # Camera abstraction
-│   └── health_monitor.py        # EKF / GPS / heartbeat checks
+├── sensors/                     # Sensor interfaces
+│   ├── camera.py                # Camera abstraction (decouples source from detector)
+│   └── health_monitor.py        # GPS fix and EKF health checks → FAULT events
+│
+├── utils/                       # Utilities
+│   ├── logger.py                # Timestamped file logging each loop iteration
+│   └── keyboard.py              # Non-blocking terminal keyboard listener (Linux + Windows)
 │
 └── models/                      # ML model weights
     ├── yolov8m.pt               # YOLOv8 medium (base)
@@ -209,22 +230,26 @@ All tunable values live in `config.py`:
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `CONNECTION_STRING` | `/dev/ttyAMA0` | UART serial port to flight controller |
+| `CONNECTION_STRING` | `udp:127.0.0.1:14551` | MAVLink connection (UART or UDP) |
 | `BAUDRATE` | `57600` | MAVLink baud rate |
-| `LISTEN_PORT` | `14550` | UDP listen port (GCS / SITL) |
+| `LISTEN_PORT` | `14551` | UDP listen port (GCS / SITL) |
+| `CONNECTION_TIMEOUT` | `5.0` | Seconds to wait for heartbeat before continuing without connection |
 | `CAMERA_INDEX` | `0` | OpenCV camera index |
 | `TAKEOFF_ALTITUDE` | `10` | Target takeoff altitude (metres) |
 | `UPDATE_RATE` | `1` | Main loop period in seconds |
 | `YOLO_UPDATE_RATE` | `0.2` | Target detection interval in seconds (5 Hz) |
 | `LOW_BATTERY_THRESHOLD` | `20` | Battery % that triggers `RECOVERABLE_FAULT` |
 | `CRITICAL_BATTERY_THRESHOLD` | `10` | Battery % that triggers `CRITICAL_FAULT` |
+| `MIN_SATELLITES` | `6` | Minimum satellites for healthy GPS |
 | `YOLO_MODEL_PATH` | `models/yolov8m.pt` | YOLO model file |
+| `YAW_KP` | `0.1` | PI proportional gain (deg/s per pixel) |
+| `YAW_KI` | `0.01` | PI integral gain |
 | `YAW_RATE_MAX` | `30.0` | Maximum yaw rate (deg/s) |
-| `YAW_GAIN` | `0.05` | Proportional gain: deg/s per pixel of error |
 | `YAW_DEADBAND` | `20.0` | Pixel error below which yaw stops |
+| `YAW_INTEGRAL_MAX` | `100.0` | Anti-windup clamp on PI integral term |
 | `FORWARD_SPEED` | `1.5` | Approach speed once target is centered (m/s) |
 | `BBOX_REACH_THRESHOLD` | `0.4` | Bounding box height fraction that means "within reach" |
-| `DISTANCE_THRESHOLD` | `10.0` | Reserved for rangefinder-based proximity (metres) |
+| `LOG_DIR` | `logs` | Directory for log files |
 
 ---
 
@@ -239,10 +264,10 @@ pip install -r requirements.txt
 **2. Configure connection** in `config.py`
 
 ```python
-CONNECTION_STRING = '/dev/ttyAMA0'   # UART port to flight controller
+CONNECTION_STRING = '/dev/ttyAMA0'   # UART to flight controller (Pi), or udp:127.0.0.1:14551 for SITL
 BAUDRATE          = 57600
 TAKEOFF_ALTITUDE  = 10               # metres
-YOLO_MODEL_PATH   = 'models/yolov8m.pt'    # or 'my_model.pt'
+YOLO_MODEL_PATH   = 'models/yolov8m.pt'    # or 'models/my_model.pt'
 ```
 
 **3. Run**
@@ -251,7 +276,7 @@ YOLO_MODEL_PATH   = 'models/yolov8m.pt'    # or 'my_model.pt'
 python main.py
 ```
 
-Press `Ctrl+C` or `q` in the camera window to shut down cleanly.
+Press `q` in the terminal or `Ctrl+C` to shut down cleanly.
 
 ---
 
@@ -273,6 +298,7 @@ Press `Ctrl+C` or `q` in the camera window to shut down cleanly.
 | `battery_remaining_pct` | `SYS_STATUS` | Battery percentage |
 | `groundspeed_m_s` | `VFR_HUD` | Horizontal speed (m/s) |
 | `climb_rate_m_s` | `VFR_HUD` | Vertical speed (m/s, positive = climb) |
+| `ekf_ok` | `EKF_STATUS_REPORT` | `True` when all EKF health flags are set |
 
 ---
 
@@ -287,9 +313,8 @@ Press `Ctrl+C` or `q` in the camera window to shut down cleanly.
 - [x] `START_TRACK` event auto-generated when target appears during `Autonomy.SEARCH`
 - [x] `TARGET_LOST` event auto-generated when target disappears during `Autonomy.SEARCH` or `Autonomy.TRACK`
 - [x] `track.py` — `TargetTracker` with PI regulator: yaws to center, then advances until `BBOX_REACH_THRESHOLD`
+- [x] `TASK_COMPLETED` fired automatically when target is reached
 - [x] FSM autonomy dispatch in `main.py` — branches on `fsm.current_autonomy`
-- [x] Operator keyboard input — `s` starts search, `l` lands, `q` quits
-- [x] `TASK_COMPLETED` fired when target is reached
 - [ ] Implement `search.py` — non-blocking lawnmower `update()` method (in progress)
 - [ ] Wire `Autonomy.SEARCH` dispatch in `main.py` once `search.py` is complete
 
@@ -299,11 +324,11 @@ Press `Ctrl+C` or `q` in the camera window to shut down cleanly.
 - [x] `EKF_STATUS_REPORT` MAVLink message handled in `vehicle_state.py`
 
 ### Phase 4 — Polish & reliability ✅
-- [x] Dynamic frame dimensions in `target_detection.py` (uses `frame.shape`)
-- [x] `requirements.txt` added
+- [x] Non-blocking startup — times out after `CONNECTION_TIMEOUT` if no autopilot found
+- [x] Terminal keyboard input via `KeyboardListener` (no camera window focus needed)
+- [x] `r` key resets FSM from `FAILSAFE` to `STANDBY` after reconnection
 - [x] Structured logging via `utils/logger.py`
-- [x] PI regulator in `track.py` for smoother yaw control with anti-windup
+- [x] PI regulator in `track.py` with anti-windup and reset on target loss
+- [x] `requirements.txt` added
 - [ ] Tweak `track.py` — zone-based yaw speeds (closer to center = slower correction)
 - [ ] Add SITL test setup (ArduPilot SITL + MAVProxy)
-
-

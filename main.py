@@ -1,4 +1,5 @@
 from utils.logger import Logger
+from utils.keyboard import KeyboardListener
 import sys
 import os
 import time
@@ -43,6 +44,10 @@ def main() -> None:
     # 7 - Logger
     logger = Logger()
 
+    # 8 - Keyboard listener (terminal input)
+    keyboard = KeyboardListener()
+    print("Controls: [s] start search  [l] land  [r] reset from failsafe  [q] quit")
+
     print("System initialized...")
 
     while True:
@@ -59,16 +64,20 @@ def main() -> None:
         # 2 - Update target detector + handle operator keypresses
         # ----------------------------------
         target_detector.update()
-        key = target_detector.display()
+        target_detector.display()
 
-        if key == ord('q'):
+        key = keyboard.get_key()
+        if key == 'q':
             break
-        elif key == ord('s') and fsm.current_state == State.HOVER:
+        elif key == 's' and fsm.current_state == State.HOVER:
             print("[INPUT] START_SEARCH")
             fsm.handle_event(Event.START_SEARCH)
-        elif key == ord('l'):
+        elif key == 'l':
             print("[INPUT] LAND")
             fsm.handle_event(Event.LAND)
+        elif key == 'r' and fsm.current_state == State.FAILSAFE:
+            print("[INPUT] RESET_ON_GND")
+            fsm.handle_event(Event.RESET_ON_GND)
 
         # ----------------------------------
         # 3 - Generate one high-level event from current data
