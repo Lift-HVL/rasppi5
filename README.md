@@ -278,7 +278,32 @@ Press `Ctrl+C` or `q` in the camera window to shut down cleanly.
 
 ## Roadmap
 
-- [ ] Implement `search.py` — area search pattern (e.g. lawnmower / spiral)
-- Tweak `track.py` - divide the captured frame into several cells and give speeds accordingly. (Frame closer to center returns less speed towards the center, than a frame on the edge).
+### Phase 1 — Core integration ✅
+- [x] Wire `FSMController` and `MAVLinkClient` into `main.py`
+- [x] Drive FSM transitions from live MAVLink telemetry (battery, GPS, heartbeat)
+- [x] `event_generator.py` maps vehicle state to FSM events each tick
+
+### Phase 2 — Autonomy behaviours ✅
+- [x] `START_TRACK` event auto-generated when target appears during `Autonomy.SEARCH`
+- [x] `TARGET_LOST` event auto-generated when target disappears during `Autonomy.SEARCH` or `Autonomy.TRACK`
+- [x] `track.py` — `TargetTracker` with PI regulator: yaws to center, then advances until `BBOX_REACH_THRESHOLD`
+- [x] FSM autonomy dispatch in `main.py` — branches on `fsm.current_autonomy`
+- [x] Operator keyboard input — `s` starts search, `l` lands, `q` quits
+- [x] `TASK_COMPLETED` fired when target is reached
+- [ ] Implement `search.py` — non-blocking lawnmower `update()` method (in progress)
+- [ ] Wire `Autonomy.SEARCH` dispatch in `main.py` once `search.py` is complete
+
+### Phase 3 — Sensors & safety ✅
+- [x] `health_monitor.py` — GPS fix and EKF health checks wired into `event_generator.py`
+- [x] `camera.py` — camera abstraction decoupling source from `TargetDetector`
+- [x] `EKF_STATUS_REPORT` MAVLink message handled in `vehicle_state.py`
+
+### Phase 4 — Polish & reliability ✅
+- [x] Dynamic frame dimensions in `target_detection.py` (uses `frame.shape`)
+- [x] `requirements.txt` added
+- [x] Structured logging via `utils/logger.py`
+- [x] PI regulator in `track.py` for smoother yaw control with anti-windup
+- [ ] Tweak `track.py` — zone-based yaw speeds (closer to center = slower correction)
+- [ ] Add SITL test setup (ArduPilot SITL + MAVProxy)
 
 

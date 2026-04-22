@@ -1,4 +1,4 @@
-from logging import Logger
+from utils.logger import Logger
 import sys
 import os
 import time
@@ -86,7 +86,9 @@ def main() -> None:
             if vehicle_state.mode != "GUIDED":  
                 commands.guided()
             else:
-                tracker.update()
+                if tracker.update():
+                    print("[TRACK] Target reached!")
+                    fsm.handle_event(Event.TASK_COMPLETED)
             print(f"[TRACK] target={target_detector.target_position} error={target_detector.target_pixel_x - target_detector.center_x:.0f}px conf={target_detector.target_confidence:.2f}")
             
         # ----------------------------------

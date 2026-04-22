@@ -22,12 +22,9 @@ MIN_SATELLITES = 6
 YOLO_MODEL_PATH = 'models/yolov8m.pt'  # Path to the YOLO model for target detection
 
 # Autonomy parameters
-YAW_GAIN = 0.05             # deg/s per pixel of error
 YAW_DEADBAND = 20.0         # pixels - stop rotation when this close to center
 FORWARD_SPEED = 1.5          # m/s - forward approach speed once target is centered
 BBOX_REACH_THRESHOLD = 0.4   # fraction of frame height the bbox must fill to be "within reach"
-
-# PI regulator parameters for track.py
 YAW_KP = 0.1                # Proportional gain for yaw control
 YAW_KI = 0.01               # Integral gain for yaw control
 YAW_RATE_MAX = 30.0         # deg/s - maximum rotation speed

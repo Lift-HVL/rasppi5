@@ -34,16 +34,14 @@ class Logger:
             - Add more fields as needed (e.g. GPS coordinates, error messages, etc.)
         """
         line = (
-            f"Battery: {vehicle_state.battery:.1f}% | "
-            f"Satellites: {vehicle_state.satellites} | "
+            f"Battery: {vehicle_state.battery_remaining_pct}% | "
+            f"Satellites: {vehicle_state.satellites_visible} | "
             f"Mode: {vehicle_state.mode} | "
             f"Armed: {vehicle_state.armed} | "
-            f"Altitude: {vehicle_state.altitude:.1f}m | "
-            f"Target Detected: {vehicle_state.target_detected} | "
-            f"Target BBox: {vehicle_state.target_bbox}"
+            f"Altitude: {vehicle_state.altitude_relative_m:.1f}m | "
             f"FSM State: {fsm.current_state.name} | "
-            f"FSM Substate: {fsm.substate.name if fsm.substate else 'N/A'}"
-            f"Target Count: {len(target_detector.targets)}"
+            f"FSM Substate: {fsm.current_autonomy.name if fsm.current_autonomy else 'N/A'} | "
+            f"Target Detected: {target_detector.target_detected} | "
             f"Target Position: {target_detector.target_position} | "
             f"Target Confidence: {target_detector.target_confidence:.2f}"
         )

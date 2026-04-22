@@ -10,20 +10,20 @@ class Camera:
     def __init__(self, source): 
         self.cap = cv2.VideoCapture(source) # Capture video from the specified source
         
-        def read(self) -> tuple[bool, frame]:
-            return self.cap.read() # Read a frame from the camera
-        
-        @property
-        def width(self) -> int:
-            return int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH)) # Get the width of the video frames
-        
-        @property
-        def height(self) -> int:
-            return int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) # Get the height of the video frames
-        
-        @property
-        def is_open(self) -> bool:
-            return self.cap.isOpened() # Check if the video capture is successfully opened
-        
-        def release(self) -> None:
-            self.cap.release() # Release the video capture object
+    def read(self) -> tuple[bool, frame]:
+        return self.cap.read() # Read a frame from the camera
+    
+    @property
+    def width(self) -> int:
+        return int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH)) # Get the width of the video frames
+    
+    @property
+    def height(self) -> int:
+        return int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) # Get the height of the video frames
+    
+    @property
+    def is_open(self) -> bool:
+        return self.cap.isOpened() # Check if the video capture is successfully opened
+    
+    def release(self) -> None:
+        self.cap.release() # Release the video capture object

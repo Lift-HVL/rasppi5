@@ -12,7 +12,7 @@ from config import MIN_SATELLITES
 class HealthMonitor:
     def check (self, vehicle_state) -> Optional[Event]:
         # Check GPS signal strength
-        if vehicle_state.gps_signal_strength is not None and vehicle_state.gps_signal_strength < 3:
+        if vehicle_state.gps_fix_type == 0:  # No fix
             return Event.FAULT
         
         # Check EKF status
@@ -22,3 +22,5 @@ class HealthMonitor:
         # Check satellite count
         if vehicle_state.satellites_visible < MIN_SATELLITES:
             return Event.FAULT
+        
+        return None  # No issues detected

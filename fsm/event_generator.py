@@ -1,12 +1,13 @@
 from fsm.event import Event
 from fsm.states import State, Autonomy
 from config import CRITICAL_BATTERY_THRESHOLD, LOW_BATTERY_THRESHOLD, TAKEOFF_ALTITUDE
-
+from sensors.health_monitor import HealthMonitor
 
 class EventGenerator:
     def __init__(self):
         self._prev_armed = False
         self._prev_target_detected = False
+        self.health_monitor = HealthMonitor()  # Initialize health monitor
 
     def generate(self, vehicle_state, fsm, target_detector=None):
         event = self._generate(vehicle_state, fsm, target_detector)
@@ -54,6 +55,11 @@ class EventGenerator:
             elif vehicle_state.battery_remaining_pct <= LOW_BATTERY_THRESHOLD:
                 return Event.RECOVERABLE_FAULT
 
+        # 6.5 - GPS and EKF health check
+        health_event = self.health_monitor.check(vehicle_state)
+        if health_event is not None:
+            return health_event
+
         # 7 - Target detection (only while actively searching)
         if (
             fsm.current_state == State.AUTONOMY
@@ -62,6 +68,15 @@ class EventGenerator:
         ):
             if target_detector.target_detected and not self._prev_target_detected:
                 return Event.START_TRACK
+            if not target_detector.target_detected and self._prev_target_detected:
+                return Event.TARGET_LOST
+
+        # 8 - Target lost while tracking
+        if (
+            fsm.current_state == State.AUTONOMY
+            and fsm.current_autonomy == Autonomy.TRACK
+            and target_detector is not None
+        ):
             if not target_detector.target_detected and self._prev_target_detected:
                 return Event.TARGET_LOST
 

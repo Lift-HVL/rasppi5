@@ -6,7 +6,7 @@ from config import YOLO_MODEL_PATH, CAMERA_INDEX
 from sensors.camera import Camera
 
 class TargetDetector:
-    def __init__(self, Camera):
+    def __init__(self):
         self.model = YOLO(YOLO_MODEL_PATH) # Load the YOLO model for target detection
         self.cap = Camera(CAMERA_INDEX) # Capture video from the default camera
         self.center_x = 0 # X coordinate of the center of the frame
