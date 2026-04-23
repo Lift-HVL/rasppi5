@@ -1,16 +1,25 @@
 """
 Ground station dashboard server.
 
-Connects to a MAVLink stream (SITL or OpenHD-forwarded) and serves a
-real-time browser dashboard via WebSocket.
+Connects to a MAVLink stream and serves a real-time browser dashboard via
+WebSocket.
 
-SITL:    python dashboard_server.py  (uses CONNECTION_STRING from config.py)
-Outdoor: same command, run on the ground Pi — OpenHD forwards MAVLink to
-         the same local UDP port so no code change is needed.
+Usage
+-----
+Production (ground Pi with radio/wireless link on serial):
+    python dashboard_server.py
+
+SITL (MissionPlanner configured to push MAVLink Outbound → UDP 127.0.0.1:14551):
+    python dashboard_server.py --sitl
+
+Explicit connection string:
+    python dashboard_server.py --connection /dev/ttyUSB0 --baud 57600
+    python dashboard_server.py --connection udp:192.168.1.50:14551
 
 Open http://<this-machine-ip>:8000 in any browser on the same LAN.
 """
 
+import argparse
 import asyncio
 import json
 import math
@@ -25,7 +34,7 @@ from fastapi.responses import HTMLResponse
 
 from autopilot.mavlink_client import MAVLinkClient
 from autopilot.vehicle_state import VehicleState
-from config import CONNECTION_TIMEOUT
+from config import CONNECTION_STRING, BAUDRATE, CONNECTION_TIMEOUT
 
 # ---------------------------------------------------------------------------
 # Shared state — written by the MAVLink thread, read by the async event loop.
@@ -125,6 +134,16 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       <div class="row"><span class="label">GPS OK</span><span class="value" id="gps_ok">—</span></div>
     </div>
 
+    <div class="card">
+      <h2>Drone App</h2>
+      <div class="row"><span class="label">FSM State</span><span class="value" id="fsm_state">—</span></div>
+      <div class="row"><span class="label">Autonomy</span><span class="value" id="autonomy">—</span></div>
+      <div class="row"><span class="label">Target</span><span class="value" id="app_tgt_det">—</span></div>
+      <div class="row"><span class="label">Confidence</span><span class="value" id="app_tgt_conf">—</span></div>
+      <div class="row"><span class="label">Pixel X</span><span class="value" id="app_tgt_px_x">—</span></div>
+      <div class="row"><span class="label">BBox height</span><span class="value" id="app_tgt_bbox_h">—</span></div>
+    </div>
+
   </div>
   <div id="footer">Connecting to WebSocket…</div>
 
@@ -161,6 +180,13 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       set('ekf',    d.ekf_ok  ? 'OK' : 'FAIL', d.ekf_ok  ? 'ok' : 'bad');
       set('gps_ok', d.gps_ok  ? 'OK' : 'FAIL', d.gps_ok  ? 'ok' : 'bad');
 
+      set('fsm_state',    d.fsm_state,  fsmClass(d.fsm_state));
+      set('autonomy',     d.autonomy === 'NONE' ? '—' : d.autonomy);
+      set('app_tgt_det',  d.app_target_det  ? 'YES' : 'NO', d.app_target_det ? 'ok' : '');
+      set('app_tgt_conf', d.app_target_det  ? (d.app_target_conf * 100).toFixed(0) + '%' : '—');
+      set('app_tgt_px_x', d.app_target_det  ? d.app_target_px_x.toFixed(0) + ' px' : '—');
+      set('app_tgt_bbox_h', d.app_target_det ? d.app_target_bbox_h.toFixed(0) + ' px' : '—');
+
       footer.textContent = 'Last update: ' + new Date().toLocaleTimeString();
     };
 
@@ -177,6 +203,13 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 
     function fixLabel(t) {
       return ['NO FIX', 'NO FIX', '2D', '3D', 'DGPS', 'RTK FLOAT', 'RTK FIXED'][t] ?? String(t);
+    }
+
+    function fsmClass(state) {
+      if (['FAILSAFE'].includes(state))                          return 'bad';
+      if (['LAND', 'RTL', 'AUTONOMY', 'MANUAL'].includes(state)) return 'warn';
+      if (['ARMED', 'TAKEOFF', 'HOVER', 'STANDBY'].includes(state)) return 'ok';
+      return '';
     }
   </script>
 </body>
@@ -214,7 +247,14 @@ async def _broadcast_loop() -> None:
             "battery_current_a":     vehicle_state.battery_current_a,
             "rssi_dbm":              vehicle_state.rssi_dbm,
             "distance_to_home_m":    vehicle_state.distance_to_home_m,
+            "gps_ok":                vehicle_state.gps_ok,
             "ekf_ok":                vehicle_state.ekf_ok,
+            "fsm_state":             vehicle_state.fsm_state_name,
+            "autonomy":              vehicle_state.autonomy_name,
+            "app_target_det":        vehicle_state.app_target_detected,
+            "app_target_conf":       vehicle_state.app_target_confidence,
+            "app_target_px_x":       vehicle_state.app_target_pixel_x,
+            "app_target_bbox_h":     vehicle_state.app_target_bbox_height,
             "timestamp":             time.time(),
         })
         dead: Set[WebSocket] = set()
@@ -223,7 +263,7 @@ async def _broadcast_loop() -> None:
                 await ws.send_text(payload)
             except Exception:
                 dead.add(ws)
-        _clients -= dead
+        _clients.difference_update(dead)
 
 
 @asynccontextmanager
@@ -258,13 +298,69 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
 # MAVLink polling thread
 # ---------------------------------------------------------------------------
 
-def _mavlink_thread() -> None:
+def _mavlink_thread(connection_string: str, baudrate: int) -> None:
     """Connect to MAVLink and poll messages into vehicle_state at ~50 Hz."""
-    client = MAVLinkClient()
-    client.wait_heartbeat(timeout=CONNECTION_TIMEOUT)
+    print(f"[mavlink] Connecting to {connection_string} …")
+    try:
+        client = MAVLinkClient(connection_string=connection_string, baudrate=baudrate)
+    except Exception as e:
+        print(f"[mavlink] ERROR: could not open connection: {e}")
+        return
+
+    ok = client.wait_heartbeat(timeout=CONNECTION_TIMEOUT)
+    if not ok:
+        print(f"[mavlink] WARNING: no heartbeat received on {connection_string} — "
+              "check connection string and that the vehicle/SITL is running.")
+    else:
+        print(f"[mavlink] Heartbeat received — streaming telemetry.")
+
     while True:
-        client.update_vehicle_state(vehicle_state)
+        try:
+            client.update_vehicle_state(vehicle_state)
+            if vehicle_state.connected and vehicle_state.heartbeat_timeout(timeout_s=3.0):
+                vehicle_state.connected = False
+                print("[mavlink] Heartbeat lost — vehicle disconnected.")
+        except Exception as e:
+            print(f"[mavlink] ERROR in poll loop: {e}")
         time.sleep(0.02)
+
+
+# ---------------------------------------------------------------------------
+# CLI argument parsing
+# ---------------------------------------------------------------------------
+
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="HVL Lift — Ground Station Dashboard Server",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Examples:\n"
+            "  python dashboard_server.py                          # production (uses CONNECTION_STRING from config)\n"
+            "  python dashboard_server.py --sitl                   # SITL: listen on 0.0.0.0:14551 for MissionPlanner output\n"
+            "  python dashboard_server.py --sitl 127.0.0.1         # SITL: listen on loopback only\n"
+            "  python dashboard_server.py --connection /dev/ttyUSB0 --baud 57600\n"
+        ),
+    )
+
+    source = parser.add_mutually_exclusive_group()
+    source.add_argument(
+        "--sitl", metavar="BIND", nargs="?", const="0.0.0.0",
+        help="SITL mode — listen on BIND:14551 for MAVLink pushed by MissionPlanner (default: 0.0.0.0)",
+    )
+    source.add_argument(
+        "--connection", metavar="STRING",
+        help="Explicit MAVLink connection string (e.g. /dev/ttyUSB0, udp:host:port)",
+    )
+
+    parser.add_argument(
+        "--baud", type=int, default=BAUDRATE, metavar="RATE",
+        help=f"Baud rate for serial connections (default: {BAUDRATE})",
+    )
+    parser.add_argument(
+        "--port", type=int, default=8000, metavar="PORT",
+        help="Dashboard HTTP/WebSocket server port (default: 8000)",
+    )
+    return parser.parse_args()
 
 
 # ---------------------------------------------------------------------------
@@ -272,7 +368,22 @@ def _mavlink_thread() -> None:
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    t = threading.Thread(target=_mavlink_thread, daemon=True)
+    args = _parse_args()
+
+    if args.sitl is not None:
+        conn_str = f"udpin:{args.sitl}:14551"
+        mode_label = f"SITL  ({conn_str})"
+    elif args.connection:
+        conn_str = args.connection
+        mode_label = f"custom ({conn_str})"
+    else:
+        conn_str = CONNECTION_STRING
+        mode_label = f"config ({conn_str})"
+
+    print(f"[dashboard] MAVLink : {mode_label}")
+    print(f"[dashboard] Serving : http://0.0.0.0:{args.port}")
+    print(f"[dashboard] LAN URL : http://<this-machine-ip>:{args.port}")
+
+    t = threading.Thread(target=_mavlink_thread, args=(conn_str, args.baud), daemon=True)
     t.start()
-    print("Dashboard: http://localhost:8000  (or replace localhost with this machine's LAN IP)")
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=args.port)

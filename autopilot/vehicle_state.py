@@ -5,6 +5,13 @@ import time
 from pymavlink import mavutil
 
 
+_FSM_STATE_NAMES = {
+    0: "UNKNOWN", 1: "BOOT", 2: "STANDBY", 3: "ARMED", 4: "TAKEOFF",
+    5: "HOVER", 6: "MANUAL", 7: "AUTONOMY", 8: "FAILSAFE", 9: "LAND", 10: "RTL",
+}
+_AUTONOMY_NAMES = {0: "NONE", 1: "SEARCH", 2: "TRAVEL", 3: "TRACK"}
+
+
 def _haversine(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     """Great-circle distance in metres between two GPS coordinates."""
     R = 6_371_000
@@ -52,6 +59,17 @@ class VehicleState:
 
     ekf_ok: bool = True
     in_air: bool = False
+
+    # App-level telemetry injected by the companion computer via NAMED_VALUE_FLOAT.
+    # Only populated in flight; stays at defaults when connected to bare SITL.
+    fsm_state_id: int = 0
+    fsm_state_name: str = "UNKNOWN"
+    autonomy_id: int = 0
+    autonomy_name: str = "NONE"
+    app_target_detected: bool = False
+    app_target_confidence: float = 0.0
+    app_target_pixel_x: float = 0.0
+    app_target_bbox_height: float = 0.0
 
     @property
     def distance_to_home_m(self) -> Optional[float]:
@@ -129,4 +147,25 @@ class VehicleState:
         elif msg_type == "EKF_STATUS_REPORT":
             flags = msg.flags
             self.ekf_ok = bool(flags & 0x1F == 0x1F)
+
+        elif msg_type == "NAMED_VALUE_FLOAT":
+            key = msg.name
+            if isinstance(key, bytes):
+                key = key.decode("utf-8")
+            key = key.rstrip("\x00")
+            val = msg.value
+            if key == "fsm_state":
+                self.fsm_state_id = int(val)
+                self.fsm_state_name = _FSM_STATE_NAMES.get(int(val), "UNKNOWN")
+            elif key == "autonomy":
+                self.autonomy_id = int(val)
+                self.autonomy_name = _AUTONOMY_NAMES.get(int(val), "NONE")
+            elif key == "tgt_det":
+                self.app_target_detected = bool(round(val))
+            elif key == "tgt_conf":
+                self.app_target_confidence = val
+            elif key == "tgt_px_x":
+                self.app_target_pixel_x = val
+            elif key == "tgt_bbox_h":
+                self.app_target_bbox_height = val
     
