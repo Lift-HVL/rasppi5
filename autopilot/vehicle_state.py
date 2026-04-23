@@ -1,7 +1,18 @@
 from dataclasses import dataclass, field
 from typing import Optional
+import math
 import time
 from pymavlink import mavutil
+
+
+def _haversine(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Great-circle distance in metres between two GPS coordinates."""
+    R = 6_371_000
+    phi1, phi2 = math.radians(lat1), math.radians(lat2)
+    dphi    = math.radians(lat2 - lat1)
+    dlambda = math.radians(lon2 - lon1)
+    a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2) ** 2
+    return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
 @dataclass
 class VehicleState:
@@ -20,17 +31,33 @@ class VehicleState:
     heading_deg: Optional[float] = None
     
     groundspeed_m_s: float = 0.0
+    airspeed_m_s: float = 0.0
     climb_rate_m_s: float = 0.0
-    
+
+    pitch: float = 0.0  # radians
+    roll: float = 0.0   # radians
+
     battery_voltage_v: Optional[float] = None
     battery_remaining_pct: Optional[int] = None
-    
+    battery_current_a: Optional[float] = None
+
     gps_fix_type: int = 0
     satellites_visible: int = 0
     gps_ok: bool = False
-    
+
+    rssi_dbm: Optional[float] = None
+
+    home_latitude: Optional[float] = None
+    home_longitude: Optional[float] = None
+
     ekf_ok: bool = True
     in_air: bool = False
+
+    @property
+    def distance_to_home_m(self) -> Optional[float]:
+        if None in (self.latitude, self.longitude, self.home_latitude, self.home_longitude):
+            return None
+        return _haversine(self.latitude, self.longitude, self.home_latitude, self.home_longitude)
     
     def mark_heartbeat(self) -> None:
         self.connected = True
@@ -80,9 +107,26 @@ class VehicleState:
             
         elif msg_type == "VFR_HUD":
             self.groundspeed_m_s = msg.groundspeed
+            self.airspeed_m_s = msg.airspeed
             self.climb_rate_m_s = msg.climb
-            
+
+        elif msg_type == "ATTITUDE":
+            self.pitch = msg.pitch
+            self.roll  = msg.roll
+
+        elif msg_type == "BATTERY_STATUS":
+            if msg.current_battery != -1:
+                self.battery_current_a = msg.current_battery / 100.0
+
+        elif msg_type == "RADIO_STATUS":
+            if msg.rssi != 255:
+                self.rssi_dbm = msg.rssi - 120  # SiK radio approximation
+
+        elif msg_type == "HOME_POSITION":
+            self.home_latitude  = msg.latitude  / 1e7
+            self.home_longitude = msg.longitude / 1e7
+
         elif msg_type == "EKF_STATUS_REPORT":
             flags = msg.flags
-            self.ekf_ok = bool(flags & 0x1F == 0x1F)  # Check if all EKF status flags are set (0b11111)
+            self.ekf_ok = bool(flags & 0x1F == 0x1F)
     

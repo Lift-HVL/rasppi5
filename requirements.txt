@@ -2,3 +2,6 @@ pymavlink
 pyserial
 ultralytics
 opencv-python
+fastapi
+uvicorn[standard]
+websockets
