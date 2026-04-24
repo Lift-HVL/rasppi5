@@ -1,8 +1,7 @@
 # Connection parameters
-# Production (air Pi → flight controller serial):  '/dev/ttyAMA0'
-# SITL testing (MissionPlanner outbound → this script): 'udpin:0.0.0.0:14552'
-CONNECTION_STRING = 'udpin:0.0.0.0:14552'
+CONNECTION_STRING = 'udp:127.0.0.1:14551'
 BAUDRATE = 57600
+LISTEN_PORT = 14551
 CONNECTION_TIMEOUT = 5.0  # seconds to wait for heartbeat before assuming no connection
 
 # Camera parameters

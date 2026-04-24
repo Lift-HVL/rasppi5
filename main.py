@@ -18,16 +18,6 @@ from fsm.states import State, Autonomy
 
 from config import UPDATE_RATE
 
-def _inject_app_telemetry(client: MAVLinkClient, fsm: FSMController, detector) -> None:
-    """Send FSM/autonomy/detection state as NAMED_VALUE_FLOAT so the ground dashboard sees it."""
-    client.send_named_float("fsm_state",  float(fsm.current_state.value))
-    client.send_named_float("autonomy",   float(fsm.current_autonomy.value if fsm.current_autonomy else 0))
-    client.send_named_float("tgt_det",    1.0 if detector.target_detected else 0.0)
-    client.send_named_float("tgt_conf",   detector.target_confidence if detector.target_detected else 0.0)
-    client.send_named_float("tgt_px_x",  detector.target_pixel_x if detector.target_detected else 0.0)
-    client.send_named_float("tgt_bbox_h", detector.target_bbox_height if detector.target_detected else 0.0)
-
-
 def main() -> None:
     print("Starting drone autonomy system...")
 
@@ -126,7 +116,6 @@ def main() -> None:
             f"msgs = {processed_count}"
         )
 
-        _inject_app_telemetry(mavlink_client, fsm, target_detector)
         logger.log_iteration(vehicle_state, fsm, target_detector)
 
         # ----------------------------------

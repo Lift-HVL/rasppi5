@@ -1,13 +1,11 @@
-import time
-
 from pymavlink import mavutil
 from config import CONNECTION_STRING, BAUDRATE, CONNECTION_TIMEOUT
 
 class MAVLinkClient:
-    def __init__(self, connection_string: str = None, baudrate: int = None):
+    def __init__(self):
         self.master = mavutil.mavlink_connection(
-            connection_string or CONNECTION_STRING,
-            baud=baudrate or BAUDRATE,
+            CONNECTION_STRING,
+            baud=BAUDRATE,
         )
 
     def wait_heartbeat(self, timeout: float = CONNECTION_TIMEOUT) -> bool:
@@ -21,14 +19,6 @@ class MAVLinkClient:
             return False
         print("Heartbeat received from autopilot")
         return True
-
-    def send_named_float(self, name: str, value: float) -> None:
-        """Inject a NAMED_VALUE_FLOAT into the MAVLink stream (routed to GCS by ArduPilot)."""
-        self.master.mav.named_value_float_send(
-            int(time.time() * 1000) & 0xFFFFFFFF,
-            name.encode("ascii"),
-            float(value),
-        )
 
     def update_vehicle_state(self, state) -> bool:
         """Read one pending MAVLink message and apply it to a VehicleState.
