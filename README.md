@@ -184,6 +184,56 @@ If no autopilot connection is found at startup, the system continues running wit
 
 ---
 
+## MAVLink Bridge Setup
+
+For the three-project ground-station setup, `rasppi5` should receive MAVLink from `mavlink-bridge/ws_server.py`, not bind to the same UDP port as the dashboard bridge.
+
+Recommended local ports:
+
+```text
+Mission Planner / SITL -> mavlink-bridge: 127.0.0.1:14550
+mavlink-bridge -> rasppi5:                127.0.0.1:14552
+mavlink-bridge -> dashboard:              ws://127.0.0.1:8000/ws
+```
+
+Run the bridge:
+
+```powershell
+cd ..\mavlink-bridge
+python ws_server.py --udp-host 127.0.0.1 --udp-port 14550 --ws-host 127.0.0.1 --ws-port 8000 --forward 127.0.0.1:14552
+```
+
+Then run this project:
+
+```powershell
+python main.py
+```
+
+The default `CONNECTION_STRING` is `udpin:127.0.0.1:14552`, which matches the bridge's `--forward 127.0.0.1:14552`.
+
+To override the MAVLink connection without editing `config.py`:
+
+```powershell
+$env:LIFT_MAVLINK_CONNECTION = "udpin:127.0.0.1:14552"
+python main.py
+```
+
+On Raspberry Pi / Linux:
+
+```bash
+LIFT_MAVLINK_CONNECTION=udpin:0.0.0.0:14552 python main.py
+```
+
+For direct serial production wiring, use the flight-controller serial device instead:
+
+```bash
+LIFT_MAVLINK_CONNECTION=/dev/ttyAMA0 LIFT_MAVLINK_BAUDRATE=57600 python main.py
+```
+
+Do not configure `rasppi5` to listen on the same UDP port as `mavlink-bridge/ws_server.py`.
+
+---
+
 ## File Structure
 
 ```
@@ -230,9 +280,8 @@ All tunable values live in `config.py`:
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `CONNECTION_STRING` | `udp:127.0.0.1:14551` | MAVLink connection (UART or UDP) |
+| `CONNECTION_STRING` | `udpin:127.0.0.1:14552` | MAVLink connection. Override with `LIFT_MAVLINK_CONNECTION` |
 | `BAUDRATE` | `57600` | MAVLink baud rate |
-| `LISTEN_PORT` | `14551` | UDP listen port (GCS / SITL) |
 | `CONNECTION_TIMEOUT` | `5.0` | Seconds to wait for heartbeat before continuing without connection |
 | `CAMERA_INDEX` | `0` | OpenCV camera index |
 | `TAKEOFF_ALTITUDE` | `10` | Target takeoff altitude (metres) |
@@ -264,7 +313,7 @@ pip install -r requirements.txt
 **2. Configure connection** in `config.py`
 
 ```python
-CONNECTION_STRING = '/dev/ttyAMA0'   # UART to flight controller (Pi), or udp:127.0.0.1:14551 for SITL
+CONNECTION_STRING = 'udpin:127.0.0.1:14552'  # bridge fan-out, or '/dev/ttyAMA0' for Pi serial
 BAUDRATE          = 57600
 TAKEOFF_ALTITUDE  = 10               # metres
 YOLO_MODEL_PATH   = 'models/yolov8m.pt'    # or 'models/my_model.pt'

@@ -1,7 +1,9 @@
 {
   "permissions": {
     "allow": [
-      "Bash(grep -E \"\\\\.json$|\\\\.md$|\\\\.js$|\\\\.ts$|^d\")"
+      "Bash(grep -E \"\\\\.json$|\\\\.md$|\\\\.js$|\\\\.ts$|^d\")",
+      "Bash(git -C \"c:/Users/danie/OneDrive - Høgskulen på Vestlandet/ARBEIDSMAPPE/Studentorganisasjon/HVL Lift/Code/rasppi5\" status)",
+      "Bash(git -C \"c:/Users/danie/OneDrive - Høgskulen på Vestlandet/ARBEIDSMAPPE/Studentorganisasjon/HVL Lift/Code/rasppi5\" log --oneline -5)"
     ]
   }
 }

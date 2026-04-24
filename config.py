@@ -1,9 +1,11 @@
+import os
+
 # Connection parameters
-# Production (air Pi → flight controller serial):  '/dev/ttyAMA0'
-# SITL testing on the same machine (MissionPlanner outbound → this script): 'udpin:127.0.0.1:14551'
-CONNECTION_STRING = 'udpin:127.0.0.1:14552'
+# Production (air Pi -> flight controller serial): '/dev/ttyAMA0'
+# Ground-station bridge fan-out target: 'udpin:127.0.0.1:14552'
+CONNECTION_STRING = 'udpin:127.0.0.1:14551'
 BAUDRATE = 57600
-CONNECTION_TIMEOUT = 5.0  # seconds to wait for heartbeat before assuming no connection
+CONNECTION_TIMEOUT = 10.0  # seconds to wait for heartbeat before assuming no connection
 
 # Camera parameters
 CAMERA_INDEX = 0  # Index of the camera to use (0 for default)
@@ -13,7 +15,7 @@ TAKEOFF_ALTITUDE = 10
 
 # Timing
 UPDATE_RATE = 1  # seconds
-YOLO_UPDATE_RATE = 0.2 # seconds
+YOLO_UPDATE_RATE = 0.2  # seconds
 
 # Safety
 LOW_BATTERY_THRESHOLD = 20
@@ -25,12 +27,12 @@ YOLO_MODEL_PATH = 'models/yolov8m.pt'  # Path to the YOLO model for target detec
 
 # Autonomy parameters
 YAW_DEADBAND = 20.0         # pixels - stop rotation when this close to center
-FORWARD_SPEED = 1.5          # m/s - forward approach speed once target is centered
-BBOX_REACH_THRESHOLD = 0.4   # fraction of frame height the bbox must fill to be "within reach"
-YAW_KP = 0.1                # Proportional gain for yaw control
-YAW_KI = 0.01               # Integral gain for yaw control
-YAW_RATE_MAX = 30.0         # deg/s - maximum rotation speed
-YAW_INTEGRAL_MAX = 100.0    # Maximum integral term to prevent windup
+FORWARD_SPEED = 1.5        # m/s - forward approach speed once target is centered
+BBOX_REACH_THRESHOLD = 0.4 # fraction of frame height the bbox must fill to be "within reach"
+YAW_KP = 0.1               # Proportional gain for yaw control
+YAW_KI = 0.01              # Integral gain for yaw control
+YAW_RATE_MAX = 30.0        # deg/s - maximum rotation speed
+YAW_INTEGRAL_MAX = 100.0   # Maximum integral term to prevent windup
 
 # Utility parameters
 LOG_DIR = 'logs'  # Directory to save logs and images
