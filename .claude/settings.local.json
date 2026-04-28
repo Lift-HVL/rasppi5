@@ -3,7 +3,9 @@
     "allow": [
       "Bash(grep -E \"\\\\.json$|\\\\.md$|\\\\.js$|\\\\.ts$|^d\")",
       "Bash(git -C \"c:/Users/danie/OneDrive - Høgskulen på Vestlandet/ARBEIDSMAPPE/Studentorganisasjon/HVL Lift/Code/rasppi5\" status)",
-      "Bash(git -C \"c:/Users/danie/OneDrive - Høgskulen på Vestlandet/ARBEIDSMAPPE/Studentorganisasjon/HVL Lift/Code/rasppi5\" log --oneline -5)"
+      "Bash(git -C \"c:/Users/danie/OneDrive - Høgskulen på Vestlandet/ARBEIDSMAPPE/Studentorganisasjon/HVL Lift/Code/rasppi5\" log --oneline -5)",
+      "Bash(robocopy 'c:/Users/danie/OneDrive - Høgskulen på Vestlandet/ARBEIDSMAPPE/Studentorganisasjon/HVL Lift/Code/ground-station-dashboard' 'c:/Users/danie/OneDrive - Høgskulen på Vestlandet/ARBEIDSMAPPE/Studentorganisasjon/HVL Lift/Code/rasppi5/ground-station-dashboard' /E /XD node_modules build .react-router .git /NFL /NDL /NJH /NJS)",
+      "Bash(echo \"Exit code: $?\")"
     ]
   }
 }

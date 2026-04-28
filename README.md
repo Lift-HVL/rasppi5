@@ -1,7 +1,8 @@
 # HVL Lift — Autonomous Drone System
 
-> Autonomous quadcopter control software for Raspberry Pi 5, built by [HVL Lift](https://github.com/Lift-HVL).  
-> Communicates with an ArduPilot flight controller over UART using MAVLink, runs YOLOv8-based real-time target detection, and manages all flight logic through a Finite State Machine.
+> Autonomous quadcopter control software for Raspberry Pi 5 (air Pi), built by [HVL Lift](https://github.com/Lift-HVL).  
+> Communicates with an ArduPilot flight controller over UART using MAVLink, runs YOLOv8-based real-time target detection, and manages all flight logic through a Finite State Machine.  
+> Includes a ground-station WebSocket server and React dashboard accessible from any browser on the same network.
 
 ---
 
@@ -13,6 +14,8 @@
 | Autopilot protocol | MAVLink / pymavlink |
 | Object detection | YOLOv8 (Ultralytics) |
 | Computer vision | OpenCV |
+| Ground station server | FastAPI + uvicorn |
+| Dashboard frontend | React Router 7 + TailwindCSS |
 | Hardware | Raspberry Pi 5 + ArduPilot FC |
 
 ---
@@ -31,7 +34,8 @@ The system runs a single control loop in `main.py` that ties three layers togeth
 │  ④ generate_event(vehicle_state, fsm, detector) → FSM event     │
 │  ⑤ fsm.handle_event(event) → state transition                   │
 │  ⑥ Dispatch autonomy behaviour for current FSM sub-mode         │
-│  ⑦ Log iteration + sleep to maintain UPDATE_RATE                │
+│  ⑦ Inject FSM + target telemetry → MAVLink (NAMED_VALUE_FLOAT)  │
+│  ⑧ Log iteration + sleep to maintain UPDATE_RATE                │
 └───────────┬──────────────────┬──────────────────┬───────────────┘
             ▼                  ▼                  ▼
    ┌─────────────────┐  ┌────────────┐  ┌──────────────────┐
@@ -48,17 +52,31 @@ The system runs a single control loop in `main.py` that ties three layers togeth
 * = in progress
 ```
 
+`ground_station` starts as a background daemon thread inside `main.py`. It shares the same `VehicleState`, `FSMController`, and `TargetDetector` instances directly — no UDP or inter-process communication needed.
+
+```
+Flight controller ──(serial /dev/ttyAMA0)──► main.py
+                                                 │ shared object references
+                                                 ▼
+                                         ground_station (background thread)
+                                                 │ WebSocket /ws  (port 8000)
+                                                 ▼
+                                          Browser dashboard
+                                         (any PC on same WLAN)
+```
+
 ### Main loop detail
 
 Each iteration of the loop in `main.py`:
 
-1. **Poll MAVLink** — drains all pending serial messages into `VehicleState` (non-blocking). Handles `HEARTBEAT`, `GLOBAL_POSITION_INT`, `GPS_RAW_INT`, `SYS_STATUS`, `VFR_HUD`, and `EKF_STATUS_REPORT`.
+1. **Poll MAVLink** — drains all pending serial messages into `VehicleState` (non-blocking).
 2. **Detect** — runs one YOLO frame via `TargetDetector.update()` and displays the annotated frame in an OpenCV window.
 3. **Operator input** — `KeyboardListener` reads single keypresses from the terminal (non-blocking). Keys are mapped directly to FSM events (see [Operator Controls](#operator-controls)).
-4. **Generate event** — `EventGenerator.generate()` inspects `VehicleState`, the current FSM state/sub-mode, and the detector to produce a single `Event` each tick. Priority order: connection fault → init → arm/disarm → altitude → landing → battery → GPS/EKF health → target detection.
+4. **Generate event** — `EventGenerator.generate()` inspects `VehicleState`, the current FSM state/sub-mode, and the detector to produce a single `Event` each tick.
 5. **Drive FSM** — the event (if any) is passed to `FSMController.handle_event()`, which updates `current_state` and `current_autonomy`.
-6. **Dispatch autonomy** — branches on `fsm.current_autonomy`: `TRACK` calls `TargetTracker.update()` and fires `TASK_COMPLETED` when target is reached; `SEARCH` dispatch is wired but awaits `search.py` implementation.
-7. **Log + sleep** — `Logger` writes a timestamped status line to file, then sleeps to maintain `UPDATE_RATE`.
+6. **Dispatch autonomy** — branches on `fsm.current_autonomy`: `TRACK` calls `TargetTracker.update()` and fires `TASK_COMPLETED` when target is reached.
+7. **Inject telemetry** — `MAVLinkClient.send_named_float()` injects FSM state, autonomy sub-state, and target detection data into the MAVLink stream as `NAMED_VALUE_FLOAT` messages, making them available to the ground station dashboard.
+8. **Log + sleep** — `Logger` writes a timestamped status line to file, then sleeps to maintain `UPDATE_RATE`.
 
 ---
 
@@ -174,63 +192,23 @@ Controls are read from the **terminal window** each loop tick via `KeyboardListe
 | `r` | Reset from failsafe (`RESET_ON_GND`) | FSM must be in `FAILSAFE` |
 | `q` | Quit cleanly | Any state |
 
-### Connecting to SITL after startup
-
-If no autopilot connection is found at startup, the system continues running without one (times out after `CONNECTION_TIMEOUT` seconds). When SITL is started later:
-
-1. Heartbeats arrive automatically — `vehicle_state.connected` becomes `True`
-2. Press `r` in the terminal → FSM resets from `FAILSAFE` to `STANDBY`
-3. Arm, takeoff, and fly normally from there
-
 ---
 
-## MAVLink Bridge Setup
+## Ground Station Dashboard
 
-For the three-project ground-station setup, `rasppi5` should receive MAVLink from `mavlink-bridge/ws_server.py`, not bind to the same UDP port as the dashboard bridge.
+`ground_station.py` runs as a separate process on the same Pi. It listens for a MAVLink UDP fan-out from `main.py`, aggregates all telemetry (including FSM state and target detection injected via `NAMED_VALUE_FLOAT`), and serves a React dashboard at port 8000.
 
-Recommended local ports:
+Any browser on the same WLAN can open `http://<pi-ip>:8000` to see live telemetry.
 
-```text
-Mission Planner / SITL -> mavlink-bridge: 127.0.0.1:14550
-mavlink-bridge -> rasppi5:                127.0.0.1:14552
-mavlink-bridge -> dashboard:              ws://127.0.0.1:8000/ws
-```
-
-Run the bridge:
-
-```powershell
-cd ..\mavlink-bridge
-python ws_server.py --udp-host 127.0.0.1 --udp-port 14550 --ws-host 127.0.0.1 --ws-port 8000 --forward 127.0.0.1:14552
-```
-
-Then run this project:
-
-```powershell
-python main.py
-```
-
-The default `CONNECTION_STRING` is `udpin:127.0.0.1:14552`, which matches the bridge's `--forward 127.0.0.1:14552`.
-
-To override the MAVLink connection without editing `config.py`:
-
-```powershell
-$env:LIFT_MAVLINK_CONNECTION = "udpin:127.0.0.1:14552"
-python main.py
-```
-
-On Raspberry Pi / Linux:
+**Build the frontend once** (requires Node.js on the development machine; the built files are served statically by Python):
 
 ```bash
-LIFT_MAVLINK_CONNECTION=udpin:0.0.0.0:14552 python main.py
+cd ground-station-dashboard
+npm install
+npm run build
 ```
 
-For direct serial production wiring, use the flight-controller serial device instead:
-
-```bash
-LIFT_MAVLINK_CONNECTION=/dev/ttyAMA0 LIFT_MAVLINK_BAUDRATE=57600 python main.py
-```
-
-Do not configure `rasppi5` to listen on the same UDP port as `mavlink-bridge/ws_server.py`.
+The dashboard server starts automatically when `main.py` runs — no separate process needed. `ground_station.start()` is called inside `main()` and launches a daemon thread serving the FastAPI app on port 8000.
 
 ---
 
@@ -240,12 +218,13 @@ Do not configure `rasppi5` to listen on the same UDP port as `mavlink-bridge/ws_
 rasppi5/
 │
 ├── main.py                      # Entry point & main control loop
+├── ground_station.py            # Ground station WebSocket server + dashboard host
 ├── config.py                    # All tunable parameters
 ├── requirements.txt             # Python dependencies
 │
 ├── autopilot/                   # MAVLink drone interface
-│   ├── mavlink_client.py        # Connection with configurable heartbeat timeout
-│   ├── vehicle_state.py         # Live telemetry dataclass (GPS, battery, EKF, altitude…)
+│   ├── mavlink_client.py        # Connection, heartbeat, send_named_float
+│   ├── vehicle_state.py         # Live telemetry dataclass (GPS, battery, attitude, FSM…)
 │   └── commands.py              # Flight commands: arm, takeoff, land, yaw, velocity
 │
 ├── fsm/                         # Finite State Machine
@@ -267,6 +246,12 @@ rasppi5/
 │   ├── logger.py                # Timestamped file logging each loop iteration
 │   └── keyboard.py              # Non-blocking terminal keyboard listener (Linux + Windows)
 │
+├── ground-station-dashboard/    # React dashboard frontend source
+│   ├── app/                     # React Router routes, components, hooks
+│   ├── public/                  # Static assets
+│   ├── package.json
+│   └── build/client/            # Built SPA served by ground_station.py (git-ignored)
+│
 └── models/                      # ML model weights
     ├── yolov8m.pt               # YOLOv8 medium (base)
     └── my_model.pt              # Custom trained model
@@ -280,9 +265,9 @@ All tunable values live in `config.py`:
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `CONNECTION_STRING` | `udpin:127.0.0.1:14552` | MAVLink connection. Override with `LIFT_MAVLINK_CONNECTION` |
+| `CONNECTION_STRING` | `/dev/ttyAMA0` | MAVLink connection to flight controller |
 | `BAUDRATE` | `57600` | MAVLink baud rate |
-| `CONNECTION_TIMEOUT` | `5.0` | Seconds to wait for heartbeat before continuing without connection |
+| `CONNECTION_TIMEOUT` | `10.0` | Seconds to wait for heartbeat before continuing |
 | `CAMERA_INDEX` | `0` | OpenCV camera index |
 | `TAKEOFF_ALTITUDE` | `10` | Target takeoff altitude (metres) |
 | `UPDATE_RATE` | `1` | Main loop period in seconds |
@@ -304,28 +289,39 @@ All tunable values live in `config.py`:
 
 ## Setup
 
-**1. Install dependencies**
+**1. Install Python dependencies**
 
 ```bash
 pip install -r requirements.txt
 ```
 
-**2. Configure connection** in `config.py`
+**2. Build the dashboard frontend** (on the development machine, once)
 
-```python
-CONNECTION_STRING = 'udpin:127.0.0.1:14552'  # bridge fan-out, or '/dev/ttyAMA0' for Pi serial
-BAUDRATE          = 57600
-TAKEOFF_ALTITUDE  = 10               # metres
-YOLO_MODEL_PATH   = 'models/yolov8m.pt'    # or 'models/my_model.pt'
+```bash
+cd ground-station-dashboard
+npm install
+npm run build
+cd ..
 ```
 
-**3. Run**
+**3. Configure connection** in `config.py`
+
+```python
+CONNECTION_STRING = '/dev/ttyAMA0'   # serial to flight controller
+BAUDRATE          = 57600
+TAKEOFF_ALTITUDE  = 10
+YOLO_MODEL_PATH   = 'models/yolov8m.pt'
+```
+
+**4. Run**
 
 ```bash
 python main.py
 ```
 
-Press `q` in the terminal or `Ctrl+C` to shut down cleanly.
+Open `http://<pi-ip>:8000` in any browser on the same network. The dashboard starts automatically alongside the main control loop.
+
+Press `q` in the `main.py` terminal or `Ctrl+C` to shut down cleanly.
 
 ---
 
@@ -339,15 +335,25 @@ Press `q` in the terminal or `Ctrl+C` to shut down cleanly.
 | `altitude_relative_m` | `GLOBAL_POSITION_INT` | Height above takeoff point (m) |
 | `altitude_absolute_m` | `GLOBAL_POSITION_INT` | Height above sea level (m) |
 | `latitude` / `longitude` | `GLOBAL_POSITION_INT` | GPS coordinates (degrees) |
-| `heading_deg` | `GLOBAL_POSITION_INT` | Compass heading (degrees) |
+| `heading_deg` | `GLOBAL_POSITION_INT` / `VFR_HUD` | Compass heading (degrees) |
 | `gps_fix_type` | `GPS_RAW_INT` | Fix type (3 = 3D fix) |
 | `gps_ok` | `GPS_RAW_INT` | `True` when fix type ≥ 3 |
 | `satellites_visible` | `GPS_RAW_INT` | Number of visible satellites |
 | `battery_voltage_v` | `SYS_STATUS` | Battery voltage (V) |
 | `battery_remaining_pct` | `SYS_STATUS` | Battery percentage |
+| `battery_current_a` | `SYS_STATUS` | Battery current draw (A) |
 | `groundspeed_m_s` | `VFR_HUD` | Horizontal speed (m/s) |
+| `airspeed_m_s` | `VFR_HUD` | Airspeed (m/s) |
 | `climb_rate_m_s` | `VFR_HUD` | Vertical speed (m/s, positive = climb) |
+| `pitch_deg` / `roll_deg` | `ATTITUDE` | Attitude angles (degrees) |
+| `rssi_dbm` | `RADIO_STATUS` | Radio link signal strength (dBm) |
 | `ekf_ok` | `EKF_STATUS_REPORT` | `True` when all EKF health flags are set |
+| `fsm_state_name` | `NAMED_VALUE_FLOAT` (`fsm_state`) | Current FSM state label |
+| `autonomy_name` | `NAMED_VALUE_FLOAT` (`autonomy`) | Current autonomy sub-state |
+| `app_target_detected` | `NAMED_VALUE_FLOAT` (`tgt_det`) | Whether a target is currently detected |
+| `app_target_confidence` | `NAMED_VALUE_FLOAT` (`tgt_conf`) | YOLO detection confidence |
+| `app_target_pixel_x` | `NAMED_VALUE_FLOAT` (`tgt_px_x`) | Target pixel X position in frame |
+| `app_target_bbox_height` | `NAMED_VALUE_FLOAT` (`tgt_bbox_h`) | Target bounding box height (pixels) |
 
 ---
 
@@ -379,5 +385,11 @@ Press `q` in the terminal or `Ctrl+C` to shut down cleanly.
 - [x] Structured logging via `utils/logger.py`
 - [x] PI regulator in `track.py` with anti-windup and reset on target loss
 - [x] `requirements.txt` added
+
+### Phase 5 — Ground station dashboard ✅
+- [x] `VehicleState` extended with attitude, airspeed, RSSI, battery current, FSM/autonomy/target fields
+- [x] FSM + target telemetry injected into MAVLink stream via `NAMED_VALUE_FLOAT`
+- [x] `ground_station.py` — FastAPI WebSocket server broadcasting telemetry at 5 Hz
+- [x] React dashboard served as static SPA from the Pi
+- [x] Dashboard starts as a background thread in `main.py` — shares `VehicleState`, `FSMController`, and `TargetDetector` directly, no UDP needed
 - [ ] Tweak `track.py` — zone-based yaw speeds (closer to center = slower correction)
-- [ ] Add SITL test setup (ArduPilot SITL + MAVProxy)

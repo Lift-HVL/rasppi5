@@ -170,6 +170,11 @@ cython_debug/
 # Project runtime output
 /logs/
 
+# Ground-station dashboard build artifacts
+ground-station-dashboard/node_modules/
+ground-station-dashboard/build/
+ground-station-dashboard/.react-router/
+
 # Ruff stuff:
 .ruff_cache/
 

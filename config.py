@@ -2,8 +2,8 @@ import os
 
 # Connection parameters
 # Production (air Pi -> flight controller serial): '/dev/ttyAMA0'
-# Ground-station bridge fan-out target: 'udpin:127.0.0.1:14552'
-CONNECTION_STRING = 'udpin:127.0.0.1:14551'
+# SITL / MissionPlanner (configure MP outbound UDP to 127.0.0.1:14552): 'udpin:0.0.0.0:14552'
+CONNECTION_STRING = 'udpin:0.0.0.0:14552'
 BAUDRATE = 57600
 CONNECTION_TIMEOUT = 10.0  # seconds to wait for heartbeat before assuming no connection
 

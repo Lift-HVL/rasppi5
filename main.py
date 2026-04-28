@@ -1,7 +1,5 @@
 from utils.logger import Logger
 from utils.keyboard import KeyboardListener
-import sys
-import os
 import time
 
 from autonomy.target_detection import TargetDetector
@@ -16,6 +14,7 @@ from fsm.event_generator import EventGenerator
 from fsm.event import Event
 from fsm.states import State, Autonomy
 
+import ground_station
 from config import UPDATE_RATE
 
 def _inject_app_telemetry(client: MAVLinkClient, fsm: FSMController, detector) -> None:
@@ -57,6 +56,9 @@ def main() -> None:
     # 8 - Keyboard listener (terminal input)
     keyboard = KeyboardListener()
     print("Controls: [s] start search  [l] land  [r] reset from failsafe  [q] quit")
+
+    # 9 - Ground station dashboard (background thread, no UDP needed)
+    ground_station.start(vehicle_state, fsm=fsm, detector=target_detector)
 
     print("System initialized...")
 

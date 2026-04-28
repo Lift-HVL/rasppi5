@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(rm -f \"c:/Users/olsen/OneDrive - Høgskulen på Vestlandet/ARBEIDSMAPPE/Studentorganisasjon/HVL Lift/Code/ground-station-frontend/app/pages/home/HomePage.tsx\" \"c:/Users/olsen/OneDrive - Høgskulen på Vestlandet/ARBEIDSMAPPE/Studentorganisasjon/HVL Lift/Code/ground-station-frontend/app/pages/missions/MissionsPage.tsx\" \"c:/Users/olsen/OneDrive - Høgskulen på Vestlandet/ARBEIDSMAPPE/Studentorganisasjon/HVL Lift/Code/ground-station-frontend/app/pages/graphs/GraphsPage.tsx\" \"c:/Users/olsen/OneDrive - Høgskulen på Vestlandet/ARBEIDSMAPPE/Studentorganisasjon/HVL Lift/Code/ground-station-frontend/app/routes/home.tsx\" \"c:/Users/olsen/OneDrive - Høgskulen på Vestlandet/ARBEIDSMAPPE/Studentorganisasjon/HVL Lift/Code/ground-station-frontend/app/routes/missions.tsx\" \"c:/Users/olsen/OneDrive - Høgskulen på Vestlandet/ARBEIDSMAPPE/Studentorganisasjon/HVL Lift/Code/ground-station-frontend/app/routes/graphs.tsx\")",
+      "Bash(rmdir \"c:/Users/olsen/OneDrive - Høgskulen på Vestlandet/ARBEIDSMAPPE/Studentorganisasjon/HVL Lift/Code/ground-station-frontend/app/pages/home\" \"c:/Users/olsen/OneDrive - Høgskulen på Vestlandet/ARBEIDSMAPPE/Studentorganisasjon/HVL Lift/Code/ground-station-frontend/app/pages/missions\" \"c:/Users/olsen/OneDrive - Høgskulen på Vestlandet/ARBEIDSMAPPE/Studentorganisasjon/HVL Lift/Code/ground-station-frontend/app/pages/graphs\")",
+      "Bash(npm run *)",
+      "Bash(npx react-router *)",
+      "Bash(npx tsc *)",
+      "Bash(node_modules/.bin/react-router typegen *)",
+      "Bash(node_modules/.bin/tsc --noEmit)",
+      "Bash(npm install *)",
+      "Bash(git checkout *)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git branch *)",
+      "Bash(git push *)"
+    ]
+  }
+}
