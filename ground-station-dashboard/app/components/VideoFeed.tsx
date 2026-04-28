@@ -52,7 +52,7 @@ export function VideoFeed({ url, label = 'Camera Feed' }: Props) {
           <div className="flex justify-between items-end">
             <span className="text-[10px] text-gray-400 font-mono">{label}</span>
             <span className="text-[10px] text-gray-500 font-mono">
-              {new Date().toUTCString().split(' ').slice(4, 5).join('')} UTC
+              {new Date().toLocaleString('nb-NO').split(' ').slice(4, 5).join('')} LT
             </span>
           </div>
         </div>

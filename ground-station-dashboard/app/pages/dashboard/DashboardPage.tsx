@@ -96,7 +96,7 @@ function StatusBar({ vs }: { vs: ReturnType<typeof useVehicleState> }) {
       </div>
 
       <div className="ml-auto text-gray-700 font-mono hidden lg:block">
-        {new Date().toUTCString()}
+        {new Date().toLocaleString('nb-NO', { hour12: false })}
       </div>
     </div>
   );
