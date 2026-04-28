@@ -5,6 +5,7 @@ import { FSMDiagram } from '~/components/FSMDiagram';
 import { VideoFeed } from '~/components/VideoFeed';
 import { AttitudeIndicator } from '~/components/AttitudeIndicator';
 import { TelemetryChart } from '~/components/TelemetryChart';
+import type { VehicleState } from '~/types/vehicle';
 
 function Panel({ title, children, className = '' }: {
   title?: string;
@@ -102,75 +103,131 @@ function StatusBar({ vs }: { vs: ReturnType<typeof useVehicleState> }) {
   );
 }
 
+async function sendCommand(cmd: string): Promise<void> {
+  await fetch('/api/command', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ command: cmd }),
+  });
+}
+
+function CommandPanel({ vs }: { vs: VehicleState }) {
+  const state = vs.fsmState;
+  const sub   = vs.autonomySubstate;
+  const armed = state !== 'BOOT' && state !== 'STANDBY';
+
+  const btn = (
+    label: string,
+    cmd: string,
+    enabled: boolean,
+    variant: 'green' | 'red' | 'orange' | 'yellow' | 'gray' = 'gray',
+  ) => {
+    const colors: Record<string, string> = {
+      green:  'border-green-700 text-green-300 hover:bg-green-950 disabled:border-gray-800 disabled:text-gray-700',
+      red:    'border-red-800 text-red-300 hover:bg-red-950 disabled:border-gray-800 disabled:text-gray-700',
+      orange: 'border-orange-700 text-orange-300 hover:bg-orange-950 disabled:border-gray-800 disabled:text-gray-700',
+      yellow: 'border-yellow-700 text-yellow-300 hover:bg-yellow-950 disabled:border-gray-800 disabled:text-gray-700',
+      gray:   'border-gray-700 text-gray-300 hover:bg-gray-800 disabled:border-gray-800 disabled:text-gray-700',
+    };
+    return (
+      <button
+        key={cmd}
+        disabled={!enabled}
+        onClick={() => sendCommand(cmd)}
+        className={`flex-1 py-1.5 rounded border text-xs font-medium transition-colors disabled:cursor-not-allowed ${colors[variant]}`}
+      >
+        {label}
+      </button>
+    );
+  };
+
+  return (
+    <div className="flex flex-col gap-1.5 h-full justify-between">
+      <div className="flex gap-1.5">
+        {btn('Arm',   'ARM',   state === 'STANDBY', 'green')}
+        {btn('Disarm','DISARM', state === 'ARMED',   'red')}
+      </div>
+      <div className="flex gap-1.5">
+        {btn('Start Search', 'START_SEARCH', state === 'HOVER', 'green')}
+        {btn('Pause',        'TASK_PAUSED',  state === 'AUTONOMY' && sub !== 'TRACK', 'yellow')}
+      </div>
+      <div className="flex gap-1.5">
+        {btn('RTL',  'RTL',  armed && ['HOVER','AUTONOMY','MANUAL'].includes(state), 'orange')}
+        {btn('Land', 'LAND', ['HOVER','AUTONOMY','MANUAL'].includes(state), 'red')}
+        {btn('Reset','RESET_ON_GND', state === 'FAILSAFE', 'yellow')}
+      </div>
+      <p className="text-gray-700 text-[10px]">State: {state}</p>
+    </div>
+  );
+}
+
 export default function DashboardPage() {
   const { settings } = useSettings();
   const vs = useVehicleState();
 
   return (
-    <div className="flex flex-col gap-3 p-3 h-[calc(100vh-3rem)] bg-gray-950 overflow-hidden">
+    <div className="flex flex-col gap-2 p-2 bg-gray-950 h-[calc(100vh-3rem)]">
       <StatusBar vs={vs} />
 
-      {/* Main grid: vehicle state | FSM | video */}
-      <div className="grid grid-cols-12 gap-3 flex-1 min-h-0">
-        <Panel title="Vehicle State" className="col-span-3 overflow-y-auto">
-          <VehicleStateWidget
-            state={vs}
-            warnBatteryPct={settings.batteryWarnPercent}
-            criticalBatteryPct={settings.batteryCriticalPercent}
-          />
-        </Panel>
+      <div className="flex-1 min-h-0 flex flex-col gap-2">
 
-        <Panel title="Flight State Machine" className="col-span-5">
-          <FSMDiagram currentState={vs.fsmState} substate={vs.autonomySubstate} />
-        </Panel>
+        {/* Top row: vehicle state | FSM | video */}
+        <div className="flex-[3] min-h-0 grid grid-cols-12 gap-2">
+          <Panel title="Vehicle State" className="col-span-3 overflow-y-auto">
+            <VehicleStateWidget
+              state={vs}
+              warnBatteryPct={settings.batteryWarnPercent}
+              criticalBatteryPct={settings.batteryCriticalPercent}
+            />
+          </Panel>
 
-        <Panel title="Video Feed" className="col-span-4">
-          <VideoFeed url={settings.videoUrl || undefined} />
-        </Panel>
-      </div>
+          <Panel title="Flight State Machine" className="col-span-5">
+            <FSMDiagram currentState={vs.fsmState} substate={vs.autonomySubstate} />
+          </Panel>
 
-      {/* Bottom row: attitude + telemetry charts */}
-      <div className="grid grid-cols-12 gap-3 shrink-0" style={{ height: 200 }}>
-        <Panel title="Attitude" className="col-span-3">
-          <AttitudeIndicator pitch={vs.pitch} roll={vs.roll} heading={vs.heading} />
-        </Panel>
-
-        <div className="col-span-9 grid grid-cols-4 gap-3">
-          <TelemetryChart
-            value={vs.relativeAltitude}
-            label="Altitude AGL"
-            unit="m"
-            color="#38bdf8"
-            minBound={0}
-            maxBound={settings.maxAltitude}
-          />
-          <TelemetryChart
-            value={vs.groundSpeed}
-            label="Ground Speed"
-            unit="m/s"
-            color="#a78bfa"
-            minBound={0}
-            maxBound={settings.maxSpeed}
-          />
-          <TelemetryChart
-            value={vs.batteryPercent}
-            label="Battery"
-            unit="%"
-            color="#34d399"
-            minBound={0}
-            maxBound={100}
-            warnBelow={settings.batteryWarnPercent}
-          />
-          <TelemetryChart
-            value={vs.rssi}
-            label="RSSI"
-            unit="dBm"
-            color="#fb923c"
-            minBound={-110}
-            maxBound={-20}
-            warnBelow={settings.rssiWarnDbm}
-          />
+          <Panel title="Video Feed" className="col-span-4">
+            <VideoFeed url={settings.videoUrl || undefined} />
+          </Panel>
         </div>
+
+        {/* Bottom row: attitude | altitude | speed | battery | commands */}
+        <div className="flex-[2] min-h-0 grid grid-cols-12 gap-2">
+          <Panel title="Attitude" className="col-span-3">
+            <AttitudeIndicator pitch={vs.pitch} roll={vs.roll} heading={vs.heading} />
+          </Panel>
+
+          <div className="col-span-9 grid grid-cols-4 gap-2 min-h-0">
+            <TelemetryChart
+              value={vs.relativeAltitude}
+              label="Altitude AGL"
+              unit="m"
+              color="#38bdf8"
+              minBound={0}
+              maxBound={settings.maxAltitude}
+            />
+            <TelemetryChart
+              value={vs.groundSpeed}
+              label="Ground Speed"
+              unit="m/s"
+              color="#a78bfa"
+              minBound={0}
+              maxBound={settings.maxSpeed}
+            />
+            <TelemetryChart
+              value={vs.batteryPercent}
+              label="Battery"
+              unit="%"
+              color="#34d399"
+              minBound={0}
+              maxBound={100}
+              warnBelow={settings.batteryWarnPercent}
+            />
+            <Panel title="Commands">
+              <CommandPanel vs={vs} />
+            </Panel>
+          </div>
+        </div>
+
       </div>
     </div>
   );

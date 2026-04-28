@@ -28,7 +28,7 @@ export function AttitudeIndicator({ pitch, roll, heading }: Attitude) {
           {/* Sky */}
           <div className="absolute inset-0 bg-gradient-to-b from-sky-900 via-sky-800 to-sky-700" />
           {/* Ground */}
-          <div className="absolute inset-0 translate-y-[58%] bg-gradient-to-b from-amber-900 via-amber-800 to-amber-900" />
+          <div className="absolute inset-0 translate-y-[50%] bg-gradient-to-b from-amber-900 via-amber-800 to-amber-900" />
           {/* Horizon line */}
           <div className="absolute left-0 right-0 top-1/2 h-px bg-white/60" />
 
@@ -37,7 +37,7 @@ export function AttitudeIndicator({ pitch, roll, heading }: Attitude) {
             <div
               key={mark}
               className="absolute left-0 right-0"
-              style={{ top: `calc(58% - ${mark * PX_PER_DEG}px)` }}
+              style={{ top: `calc(50% - ${mark * PX_PER_DEG}px)` }}
             >
               <div className="flex items-center justify-center gap-2">
                 <div className={`h-px bg-white/70 ${mark === 0 ? 'w-16' : 'w-8'}`} />

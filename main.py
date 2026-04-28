@@ -58,7 +58,7 @@ def main() -> None:
     print("Controls: [s] start search  [l] land  [r] reset from failsafe  [q] quit")
 
     # 9 - Ground station dashboard (background thread, no UDP needed)
-    ground_station.start(vehicle_state, fsm=fsm, detector=target_detector)
+    ground_station.start(vehicle_state, fsm=fsm, detector=target_detector, commands=commands)
 
     print("System initialized...")
 
@@ -81,6 +81,9 @@ def main() -> None:
         key = keyboard.get_key()
         if key == 'q':
             break
+        elif key == 't' and fsm.current_state == State.ARMED:
+            print("[INPUT] TAKEOFF_CMD")
+            fsm.handle_event(Event.TAKEOFF_CMD)
         elif key == 's' and fsm.current_state == State.HOVER:
             print("[INPUT] START_SEARCH")
             fsm.handle_event(Event.START_SEARCH)

@@ -5,7 +5,7 @@ import { AttitudeIndicator } from '~/components/AttitudeIndicator';
 
 export default function TelemetryPage() {
   const { settings } = useSettings();
-  const vs = useVehicleState(settings.mavlink.wsBridgeUrl || undefined);
+  const vs = useVehicleState();
 
   const charts = [
     {
@@ -117,7 +117,7 @@ export default function TelemetryPage() {
   ];
 
   return (
-    <div className="flex flex-col gap-3 p-3 min-h-[calc(100vh-3rem)] bg-gray-950">
+    <div className="flex flex-col gap-3 p-3 h-[calc(100vh-3rem)] bg-gray-950 overflow-hidden">
       {/* Page header */}
       <div className="flex items-center justify-between shrink-0">
         <div>
@@ -133,22 +133,24 @@ export default function TelemetryPage() {
       </div>
 
       {/* Main content */}
-      <div className="grid grid-cols-12 gap-3 flex-1">
+      <div className="grid grid-cols-12 gap-3 flex-1 min-h-0">
         {/* Charts grid */}
-        <div className="col-span-9 grid grid-cols-3 gap-3 content-start">
+        <div className="col-span-9 grid grid-cols-3 gap-3 content-start overflow-y-auto">
           {charts.map(c => (
             <TelemetryChart key={c.label} {...c} />
           ))}
         </div>
 
         {/* Right column: attitude + position */}
-        <div className="col-span-3 flex flex-col gap-3">
-          <div className="bg-gray-900 rounded-lg border border-gray-800 p-3">
-            <h2 className="text-gray-500 text-[10px] uppercase tracking-widest mb-3">Attitude</h2>
-            <AttitudeIndicator pitch={vs.pitch} roll={vs.roll} heading={vs.heading} />
+        <div className="col-span-3 flex flex-col gap-3 h-full">
+          <div className="bg-gray-900 rounded-lg border border-gray-800 p-3 flex-1 flex flex-col min-h-0">
+            <h2 className="text-gray-500 text-[10px] uppercase tracking-widest mb-3 shrink-0">Attitude</h2>
+            <div className="flex-1 min-h-0">
+              <AttitudeIndicator pitch={vs.pitch} roll={vs.roll} heading={vs.heading} />
+            </div>
           </div>
 
-          <div className="bg-gray-900 rounded-lg border border-gray-800 p-3">
+          <div className="bg-gray-900 rounded-lg border border-gray-800 p-3 shrink-0">
             <h2 className="text-gray-500 text-[10px] uppercase tracking-widest mb-3">Position</h2>
             <div className="space-y-1">
               {[

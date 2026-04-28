@@ -17,34 +17,37 @@ const NODES: NodeDef[] = [
   { id: 'STANDBY',  label: 'STANDBY',  cx: 193, cy: 72  },
   { id: 'ARMED',    label: 'ARMED',    cx: 323, cy: 72  },
   { id: 'TAKEOFF',  label: 'TAKEOFF',  cx: 453, cy: 72  },
-  { id: 'AUTONOMY', label: 'AUTONOMY', cx: 453, cy: 192 },
-  { id: 'HOVER',    label: 'HOVER',    cx: 323, cy: 192 },
+  { id: 'HOVER',    label: 'HOVER',    cx: 453, cy: 192 },
+  { id: 'AUTONOMY', label: 'AUTONOMY', cx: 323, cy: 192 },
   { id: 'RTL',      label: 'RTL',      cx: 193, cy: 192 },
   { id: 'LAND',     label: 'LAND',     cx: 63,  cy: 192 },
   { id: 'FAILSAFE', label: 'FAILSAFE', cx: 258, cy: 258 },
 ];
 
-// MANUAL is a sub-mode of HOVER, shown separately in the legend
+// MANUAL is entered from AUTONOMY (and HOVER), annotated at AUTONOMY position
 const MANUAL_CX = 323;
 
-type Arrow = { d: string; dashed?: boolean };
+type Arrow = { x1: number; y1: number; x2: number; y2: number; dashed?: boolean };
 
 const ARROWS: Arrow[] = [
   // Boot sequence (top row, left → right)
-  { d: `M ${63+HW},72 L ${193-HW},72` },
-  { d: `M ${193+HW},72 L ${323-HW},72` },
-  { d: `M ${323+HW},72 L ${453-HW},72` },
-  // TAKEOFF → HOVER (right side down)
-  { d: `M 453,${72+HH} L 453,${192-HH}` },
-  // Air states (bottom row, right → left): AUTONOMY → HOVER → RTL → LAND
-  { d: `M ${453-HW},192 L ${323+HW},192` },
-  { d: `M ${323-HW},192 L ${193+HW},192` },
-  { d: `M ${193-HW},192 L ${63+HW},192` },
+  { x1: 63+HW, y1: 72, x2: 193-HW, y2: 72 },
+  { x1: 193+HW, y1: 72, x2: 323-HW, y2: 72 },
+  { x1: 323+HW, y1: 72, x2: 453-HW, y2: 72 },
+  // TAKEOFF → HOVER (straight down — altitude reached)
+  { x1: 453, y1: 72+HH, x2: 453, y2: 192-HH },
+  // HOVER → AUTONOMY (left, top channel)
+  { x1: 453-HW, y1: 187, x2: 323+HW, y2: 187 },
+  // AUTONOMY → HOVER (right, return channel)
+  { x1: 323+HW, y1: 197, x2: 453-HW, y2: 197 },
+  // AUTONOMY → RTL → LAND (bottom row, continuing left)
+  { x1: 323-HW, y1: 192, x2: 193+HW, y2: 192 },
+  { x1: 193-HW, y1: 192, x2: 63+HW, y2: 192 },
   // LAND → STANDBY (left side, up)
-  { d: `M 63,${192-HH} L 63,${72+HH}` },
-  // FAILSAFE paths (dashed orange)
-  { d: `M ${323},${192+HH} L 258,${258-HH}`, dashed: true },
-  { d: `M ${258-HW},258 L ${63+HW},${192+HH}`, dashed: true },
+  { x1: 63, y1: 192-HH, x2: 63, y2: 72+HH },
+  // FAILSAFE paths (dashed orange) — from AUTONOMY position
+  { x1: 323, y1: 192+HH, x2: 258, y2: 258-HH, dashed: true },
+  { x1: 258-HW, y1: 258, x2: 63+HW, y2: 192+HH, dashed: true },
 ];
 
 const SUBSTATE_LABELS: Record<AutonomySubstate, string> = {
@@ -66,10 +69,14 @@ export function FSMDiagram({ currentState, substate }: Props) {
   return (
     <div className="flex flex-col gap-3 h-full">
       <div className="flex items-center gap-3 flex-wrap">
-        <span className="text-gray-500 text-xs">Autonomy:</span>
-        <span className="px-2 py-0.5 rounded bg-blue-950 border border-blue-800 text-blue-300 text-xs font-medium">
-          {SUBSTATE_LABELS[substate]}
-        </span>
+        {substate !== 'NONE' && (
+          <>
+            <span className="text-gray-500 text-xs">Autonomy:</span>
+            <span className="px-2 py-0.5 rounded bg-blue-950 border border-blue-800 text-blue-300 text-xs font-medium">
+              {SUBSTATE_LABELS[substate]}
+            </span>
+          </>
+        )}
         {isManual && (
           <span className="px-2 py-0.5 rounded bg-gray-800 border border-gray-600 text-gray-300 text-xs">
             Manual override active
@@ -104,10 +111,8 @@ export function FSMDiagram({ currentState, substate }: Props) {
         {ARROWS.map((arrow, i) => (
           <line
             key={i}
-            x1={parseFloat(arrow.d.split(' ')[1])}
-            y1={parseFloat(arrow.d.split(' ')[2])}
-            x2={parseFloat(arrow.d.split(' ')[4])}
-            y2={parseFloat(arrow.d.split(' ')[5])}
+            x1={arrow.x1} y1={arrow.y1}
+            x2={arrow.x2} y2={arrow.y2}
             stroke={arrow.dashed ? '#f97316' : '#475569'}
             strokeWidth="1.5"
             strokeDasharray={arrow.dashed ? '5 3' : undefined}
@@ -169,7 +174,7 @@ export function FSMDiagram({ currentState, substate }: Props) {
           </text>
         )}
 
-        <text x={258} y={282} textAnchor="middle" fontSize={7} fill="#7c3014" fontFamily="ui-sans-serif, sans-serif">
+        <text x={258} y={282} textAnchor="middle" fontSize={9} fill="#7c3014" fontFamily="ui-sans-serif, sans-serif">
           triggered from any active state
         </text>
         <text x={10} y={72} dominantBaseline="middle" fontSize={7} fill="#334155" fontFamily="ui-sans-serif, sans-serif">↑ GND</text>

@@ -187,6 +187,7 @@ Controls are read from the **terminal window** each loop tick via `KeyboardListe
 
 | Key | Action | Condition |
 |-----|--------|-----------|
+| `t` | Takeoff (`TAKEOFF_CMD`) | FSM must be in `ARMED` |
 | `s` | Start search (`START_SEARCH`) | FSM must be in `HOVER` |
 | `l` | Land (`LAND`) | Any state |
 | `r` | Reset from failsafe (`RESET_ON_GND`) | FSM must be in `FAILSAFE` |

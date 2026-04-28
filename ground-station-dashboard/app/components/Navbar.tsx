@@ -3,6 +3,7 @@ import { NavLink } from 'react-router';
 const NAV_ITEMS = [
   { to: '/', label: 'Dashboard', end: true },
   { to: '/telemetry', label: 'Telemetry', end: false },
+  { to: '/map', label: 'Map', end: false },
   { to: '/logs', label: 'Logs', end: false },
   { to: '/settings', label: 'Settings', end: false },
 ];

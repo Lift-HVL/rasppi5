@@ -6,6 +6,7 @@ class Event(Enum):
     ARM = auto()                    # Command to arm the drone
     DISARM = auto()                 # Command to disarm the drone
     TAKEOFF_CMD = auto()            # Command to take off
+    RTL_CMD = auto()                # Command to return to launch
     LAND = auto()                   # Command to land
     LANDED = auto()                 # Landing successful
     ALTITUDE_REACHED = auto()       # Desired altitude reached

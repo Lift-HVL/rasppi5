@@ -13,7 +13,7 @@ interface Props {
 }
 
 const W = 260;
-const H = 60;
+const H = 130;
 
 export function TelemetryChart({
   value,
@@ -58,7 +58,7 @@ export function TelemetryChart({
           <span className="text-gray-500 text-xs ml-1">{unit}</span>
         </span>
       </div>
-      <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ height: 50 }}>
+      <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ height: 120 }}>
         {/* Grid lines */}
         {[0.25, 0.5, 0.75].map(f => (
           <line key={f} x1={0} y1={H * (1 - f)} x2={W} y2={H * (1 - f)}

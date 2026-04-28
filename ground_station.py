@@ -21,12 +21,13 @@ from pathlib import Path
 from typing import Optional, Set
 
 import uvicorn
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Body
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from autopilot.vehicle_state import VehicleState
 from fsm.states import State, Autonomy
+from fsm.event import Event
 
 logger = logging.getLogger(__name__)
 
@@ -50,9 +51,20 @@ _AUTONOMY_LABELS = {
     Autonomy.TRACK:  "TRACK",
 }
 
+_COMMAND_MAP: dict[str, Event] = {
+    "START_SEARCH":    Event.START_SEARCH,
+    "START_TRAVEL":    Event.START_TRAVEL,
+    "TASK_PAUSED":     Event.TASK_PAUSED,
+    "LAND":            Event.LAND,
+    "RESET_ON_GND":    Event.RESET_ON_GND,
+    "MANUAL_OVERRIDE": Event.MANUAL_OVERRIDE,
+    "MANUAL_DONE":     Event.MANUAL_DONE,
+}
+
 _vs: Optional[VehicleState] = None
 _fsm = None
 _detector = None
+_commands = None
 
 _clients: Set[WebSocket] = set()
 _clients_lock = threading.Lock()
@@ -85,7 +97,7 @@ def _payload() -> dict:
     }
     if _fsm is not None:
         out["fsm_state"]         = _FSM_LABELS.get(_fsm.current_state, "IDLE")
-        out["autonomy_substate"] = _AUTONOMY_LABELS.get(_fsm.current_autonomy, "MANUAL")
+        out["autonomy_substate"] = _AUTONOMY_LABELS.get(_fsm.current_autonomy, "NONE")
     if _detector is not None:
         out["target_detected"]   = _detector.target_detected
         out["target_confidence"] = _detector.target_confidence if _detector.target_detected else 0.0
@@ -140,6 +152,41 @@ async def ws_endpoint(ws: WebSocket) -> None:
             _clients.discard(ws)
 
 
+@app.post("/api/command")
+async def post_command(payload: dict = Body(...)):
+    cmd = payload.get("command", "")
+
+    # Direct MAVLink commands — bypass FSM, talk to autopilot immediately
+    if cmd == "ARM":
+        if _commands is None:
+            raise HTTPException(status_code=503, detail="Commands not available")
+        _commands.arm()
+        return {"ok": True, "command": cmd}
+
+    if cmd == "DISARM":
+        if _commands is None:
+            raise HTTPException(status_code=503, detail="Commands not available")
+        _commands.disarm()
+        return {"ok": True, "command": cmd}
+
+    if cmd == "RTL":
+        if _commands is None:
+            raise HTTPException(status_code=503, detail="Commands not available")
+        _commands.rtl()
+        if _fsm is not None:
+            _fsm.handle_event(Event.RTL_CMD)
+        return {"ok": True, "command": cmd}
+
+    # FSM events
+    if _fsm is None:
+        raise HTTPException(status_code=503, detail="FSM not available")
+    event = _COMMAND_MAP.get(cmd)
+    if event is None:
+        raise HTTPException(status_code=400, detail=f"Unknown command: {cmd!r}")
+    _fsm.handle_event(event)
+    return {"ok": True, "command": cmd}
+
+
 if _STATIC_DIR.exists():
     _assets_dir = _STATIC_DIR / "assets"
     if _assets_dir.exists():
@@ -168,6 +215,7 @@ def start(
     vehicle_state: VehicleState,
     fsm=None,
     detector=None,
+    commands=None,
     host: str = "0.0.0.0",
     port: int = 8000,
     log_level: str = "warning",
@@ -178,10 +226,11 @@ def start(
     TargetDetector. The server reads directly from the shared objects with no
     copying or inter-process communication.
     """
-    global _vs, _fsm, _detector
+    global _vs, _fsm, _detector, _commands
     _vs = vehicle_state
     _fsm = fsm
     _detector = detector
+    _commands = commands
 
     logger.info("Dashboard : http://%s:%d", host, port)
     print(f"Dashboard : http://{host}:{port}")

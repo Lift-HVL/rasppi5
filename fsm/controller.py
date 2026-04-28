@@ -60,6 +60,9 @@ class FSMController:
                 elif event == Event.MANUAL_OVERRIDE:
                     self.next_state = State.MANUAL
                     self.next_autonomy = None
+                elif event == Event.RTL_CMD:
+                    self.next_state = State.RTL
+                    self.next_autonomy = None
                 elif event == Event.LAND:
                     self.next_state = State.LAND
                     self.next_autonomy = None
@@ -70,6 +73,9 @@ class FSMController:
             case State.MANUAL:
                 if event == Event.MANUAL_DONE:
                     self.next_state = State.HOVER
+                elif event == Event.RTL_CMD:
+                    self.next_state = State.RTL
+                    self.next_autonomy = None
                 elif event == Event.FAULT:
                     self.next_state = State.FAILSAFE
                 elif event == Event.LAND:
@@ -102,6 +108,9 @@ class FSMController:
                     self.next_autonomy = None
                 elif event == Event.MANUAL_OVERRIDE:
                     self.next_state = State.MANUAL
+                    self.next_autonomy = None
+                elif event == Event.RTL_CMD:
+                    self.next_state = State.RTL
                     self.next_autonomy = None
                 elif event == Event.FAULT:
                     self.next_state = State.FAILSAFE
