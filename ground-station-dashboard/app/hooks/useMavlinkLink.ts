@@ -1,5 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { MavlinkLinkSettings } from '~/hooks/useSettings';
+
+export interface MavlinkLinkSettings {
+  wsBridgeUrl: string;
+  transport: 'serial' | 'udp' | 'tcp';
+  serialPort: string;
+  baudRate: number;
+  udpHost: string;
+  udpPort: number;
+  tcpHost: string;
+  tcpPort: number;
+  heartbeatTimeoutMs: number;
+  reconnectIntervalMs: number;
+}
 
 export interface MavlinkLinkStatus {
   connected: boolean;
