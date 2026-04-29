@@ -20,9 +20,10 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional, Set
 
+import cv2
 import uvicorn
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Body
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from autopilot.vehicle_state import VehicleState
@@ -99,8 +100,15 @@ def _payload() -> dict:
         out["fsm_state"]         = _FSM_LABELS.get(_fsm.current_state, "IDLE")
         out["autonomy_substate"] = _AUTONOMY_LABELS.get(_fsm.current_autonomy, "NONE")
     if _detector is not None:
-        out["target_detected"]   = _detector.target_detected
-        out["target_confidence"] = _detector.target_confidence if _detector.target_detected else 0.0
+        out["target_detected"]    = _detector.target_detected
+        out["target_confidence"]  = _detector.target_confidence if _detector.target_detected else 0.0
+        out["target_position"]    = _detector.target_position if _detector.target_detected else ""
+        out["target_pixel_x"]     = _detector.target_pixel_x
+        out["target_bbox_height"] = _detector.target_bbox_height
+        out["target_bbox"]        = _detector.target_bbox
+        out["target_class_name"]  = _detector.target_class_name
+        out["frame_width"]        = _detector.frame_width
+        out["frame_height"]       = _detector.frame_height
     return out
 
 
@@ -150,6 +158,24 @@ async def ws_endpoint(ws: WebSocket) -> None:
     finally:
         with _clients_lock:
             _clients.discard(ws)
+
+
+@app.get("/video")
+async def video_stream():
+    """MJPEG stream of the latest camera frame from the detector."""
+    async def _generate():
+        while True:
+            frame = _detector._raw_frame if _detector is not None else None
+            if frame is not None:
+                ok, buf = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
+                if ok:
+                    yield b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + buf.tobytes() + b'\r\n'
+            await asyncio.sleep(0.05)  # cap at 20 Hz
+
+    return StreamingResponse(
+        _generate(),
+        media_type="multipart/x-mixed-replace; boundary=frame",
+    )
 
 
 @app.post("/api/command")

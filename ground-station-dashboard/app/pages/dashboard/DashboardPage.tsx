@@ -186,7 +186,7 @@ export default function DashboardPage() {
           </Panel>
 
           <Panel title="Video Feed" className="col-span-4">
-            <VideoFeed url={settings.videoUrl || undefined} />
+            <VideoFeed url={settings.videoUrl || '/video'} />
           </Panel>
         </div>
 

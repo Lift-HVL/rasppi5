@@ -4,6 +4,7 @@ export default [
   index("routes/dashboard.tsx"),
   route("telemetry", "routes/telemetry.tsx"),
   route("map", "routes/map.tsx"),
+  route("ai", "routes/ai.tsx"),
   route("logs", "routes/logs.tsx"),
   route("settings", "routes/settings.tsx"),
 ] satisfies RouteConfig;

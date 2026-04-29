@@ -22,6 +22,13 @@ export const GPS_FIX_LABELS: Record<GPSFixType, string> = {
   4: 'DGPS',
 };
 
+export interface DetectionBbox {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+}
+
 export interface VehicleState {
   connected: boolean;
   lastHeartbeat: number;
@@ -46,6 +53,16 @@ export interface VehicleState {
   rssi: number;
   distanceToHome: number;
   timestamp: number;
+  // AI / target detection
+  targetDetected: boolean;
+  targetConfidence: number;
+  targetPosition: string;
+  targetPixelX: number;
+  targetBboxHeight: number;
+  targetBbox: DetectionBbox | null;
+  targetClassName: string;
+  frameWidth: number;
+  frameHeight: number;
 }
 
 export type LogLevel = 'DEBUG' | 'INFO' | 'WARN' | 'ERROR';

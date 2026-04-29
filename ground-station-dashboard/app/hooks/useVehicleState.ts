@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import type { FSMState, AutonomySubstate, GPSFixType, VehicleState } from '~/types/vehicle';
+import type { FSMState, AutonomySubstate, GPSFixType, VehicleState, DetectionBbox } from '~/types/vehicle';
 
 type ServerPayload = {
   connected?: boolean;
@@ -28,6 +28,13 @@ type ServerPayload = {
   autonomy_substate?: AutonomySubstate;
   target_detected?: boolean;
   target_confidence?: number;
+  target_position?: string;
+  target_pixel_x?: number;
+  target_bbox_height?: number;
+  target_bbox?: DetectionBbox | null;
+  target_class_name?: string;
+  frame_width?: number;
+  frame_height?: number;
 };
 
 // ArduPilot mode string → FSMState fallback (used when fsm_state is absent)
@@ -67,6 +74,15 @@ function mapPayload(d: ServerPayload): Partial<VehicleState> {
   if (d.rssi_dbm            != null) out.rssi             = d.rssi_dbm;
   if (d.distance_to_home_m  != null) out.distanceToHome   = d.distance_to_home_m;
   if (d.timestamp           != null) out.timestamp        = d.timestamp * 1000;
+  if (d.target_detected     != null) out.targetDetected   = d.target_detected;
+  if (d.target_confidence   != null) out.targetConfidence = d.target_confidence;
+  if (d.target_position     != null) out.targetPosition   = d.target_position;
+  if (d.target_pixel_x      != null) out.targetPixelX     = d.target_pixel_x;
+  if (d.target_bbox_height  != null) out.targetBboxHeight = d.target_bbox_height;
+  if (d.target_bbox         !== undefined) out.targetBbox  = d.target_bbox ?? null;
+  if (d.target_class_name   != null) out.targetClassName  = d.target_class_name;
+  if (d.frame_width         != null) out.frameWidth       = d.frame_width;
+  if (d.frame_height        != null) out.frameHeight      = d.frame_height;
 
   // ArduPilot mode as fallback when no real FSM state is present
   if (d.mode != null && d.fsm_state == null) {
@@ -106,6 +122,15 @@ const DISCONNECTED_STATE: VehicleState = {
   rssi: 0,
   distanceToHome: 0,
   timestamp: 0,
+  targetDetected: false,
+  targetConfidence: 0,
+  targetPosition: '',
+  targetPixelX: 0,
+  targetBboxHeight: 0,
+  targetBbox: null,
+  targetClassName: '',
+  frameWidth: 0,
+  frameHeight: 0,
 };
 
 export function useVehicleState(wsUrl?: string): VehicleState {

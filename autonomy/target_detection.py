@@ -17,20 +17,30 @@ class TargetDetector:
         self.target_position = () # Position of the detected target in the frame ("left" / "right" / "center")
         self.target_pixel_x = 0.0 # Actual pixel X coordinate of the detected target's center
         self.target_bbox_height = 0.0 # Bounding box height in pixels (proxy for distance)
-        self._last_frame = None # Most recent annotated frame for display
+        self.target_bbox = None # Normalized bbox {x1,y1,x2,y2} in 0-1 range, or None
+        self.target_class_name = "" # YOLO class name of the detected object
+        self.frame_width = 0 # Width of the camera frame in pixels
+        self.frame_height = 0 # Height of the camera frame in pixels
+        self._last_frame = None # Most recent annotated frame for local display
+        self._raw_frame = None # Most recent raw frame (no annotations) for MJPEG stream
 
     def update(self):
         ret, frame = self.cap.read() # Read a frame from the camera
         if not ret:
             return
+        self._raw_frame = frame.copy()
 
         height, width = frame.shape[:2]
         self.center_x = width / 2
         self.center_y = height / 2
+        self.frame_width = width
+        self.frame_height = height
 
         results = self.model(frame) # Run the YOLO model on the frame
 
         self.target_detected = False # Reset target detected flag each update
+        self.target_bbox = None
+        self.target_class_name = ""
 
         for result in results:
             boxes = result.boxes # Get detected bounding boxes
@@ -43,6 +53,7 @@ class TargetDetector:
                 if conf > 0.8: # Only consider detections with confidence > 80% / filter weak detections
                     self.target_detected = True
                     self.target_confidence = conf
+                    self.target_class_name = name
                     cx, _, _, bh = box.xywh[0].tolist() # Bounding box center and dimensions in pixels
                     self.target_pixel_x = cx
                     self.target_bbox_height = bh
@@ -55,6 +66,12 @@ class TargetDetector:
                         self.target_position = "center"
 
                     x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
+                    self.target_bbox = {
+                        "x1": x1 / width,
+                        "y1": y1 / height,
+                        "x2": x2 / width,
+                        "y2": y2 / height,
+                    }
                     cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
                     cv2.putText(frame, f"{name} {conf:.2f}", (x1, y1 - 8),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
