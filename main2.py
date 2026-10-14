@@ -1,4 +1,3 @@
-@ -0,0 +1,182 @@
 """Minimal connection test: connect to ArduPilot, send one simple command, confirm it worked.
 
 Usage:
