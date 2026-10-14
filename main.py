@@ -3,6 +3,8 @@ from utils.keyboard import KeyboardListener
 import sys
 import os
 import time
+import socket
+import json
 
 from autonomy.target_detection import TargetDetector
 from autonomy.track import TargetTracker
@@ -28,8 +30,43 @@ def _inject_app_telemetry(client: MAVLinkClient, fsm: FSMController, detector) -
     client.send_named_float("tgt_bbox_h", detector.target_bbox_height if detector.target_detected else 0.0)
 
 
+VEHICLE_FIELDS = [
+    "connected", "last_heartbeat_time", "armed", "mode", "system_status",
+    "altitude_relative_m", "altitude_absolute_m", "latitude", "longitude",
+    "heading_deg", "groundspeed_m_s", "climb_rate_m_s",
+    "battery_voltage_v", "battery_remaining_pct",
+    "gps_fix_type", "satellites_visible", "gps_ok", "ekf_ok", "in_air",
+]
+
+def build_telemetry(vehicle_state, fsm, detector) -> dict:
+    next_state = getattr(fsm, "next_state", None)
+    return {
+        "type": "telemetry",
+        "timestamp": time.time(),
+        "fsm": {
+            "current_state": fsm.current_state.name,
+            "next_state": next_state.name if next_state else None,
+            "autonomy": fsm.current_autonomy.name if fsm.current_autonomy else None,
+        },
+        "vehicle": {f: getattr(vehicle_state, f, None) for f in VEHICLE_FIELDS},
+        "target": {
+            "detected": detector.target_detected,
+            "confidence": detector.target_confidence if detector.target_detected else 0.0,
+        },
+    }
+
+
+
+
 def main() -> None:
     print("Starting drone autonomy system...")
+
+    GROUND_E = ("158.37.228.121", 5005)
+    GROUND_K = ("192.168.1.30", 5005)
+    GROUND_D = ("192.168.1.185", 5005)
+       # the Mac's IP
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+
 
     # 1 - Set up MAVLink connection
     mavlink_client = MAVLinkClient()
@@ -37,13 +74,13 @@ def main() -> None:
 
     # 2 - Shared live vehicle state
     vehicle_state = VehicleState()
-
+    
     # 3 - Command interface to autopilot
     commands = AutopilotCommands(mavlink_client.master)
 
     # 4 - FSM controller
     fsm = FSMController(commands)
-
+    
     # 5 - Event generator
     event_generator = EventGenerator()
 
@@ -125,6 +162,34 @@ def main() -> None:
             f"target = {target_detector.target_position if target_detector.target_detected else 'None'} \n"
             f"msgs = {processed_count}"
         )
+       
+
+
+
+
+
+        # 5.5
+        # 5.5 - Send status to ground station (Mac) over UDP
+        status = {
+            **vars(vehicle_state),
+            "fsm": fsm.current_state.name,
+            "autonomy": fsm.current_autonomy.name if fsm.current_autonomy else None,
+            "target_detected": target_detector.target_detected,
+            "target_conf": target_detector.target_confidence if target_detector.target_detected else 0.0,
+        }
+        
+            
+
+     
+
+        try:
+            payload = json.dumps(build_telemetry(vehicle_state, fsm, target_detector), default=str)
+            sock.sendto(payload.encode(), GROUND_D)
+            sock.sendto(payload.encode(), GROUND_E)
+
+            sock.sendto(payload.encode(), GROUND_K)
+        except OSError as e:
+            print(f"[UDP] send failed: {e}")    
 
         _inject_app_telemetry(mavlink_client, fsm, target_detector)
         logger.log_iteration(vehicle_state, fsm, target_detector)
