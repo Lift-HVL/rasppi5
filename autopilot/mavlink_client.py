@@ -1,5 +1,5 @@
 import time
-
+from autopilot.extra_telemetry import apply_extra  # at the top of the file
 from pymavlink import mavutil
 from config import CONNECTION_STRING, BAUDRATE, CONNECTION_TIMEOUT
 
@@ -79,6 +79,7 @@ class MAVLinkClient:
         Non-blocking: returns immediately when the receive buffer is empty.
         """
         msg = self.master.recv_match(blocking=False)
+        apply_extra(vehicle_state, msg)
         if msg is None or msg.get_type() == 'BAD_DATA':
             return False
         state.update_from_message(msg, master=self.master)

@@ -35,15 +35,28 @@ def wait_for_mode(master, mode_name: str, timeout: float = 5.0) -> bool:
 
 
 def wait_for_ack(master, command: int, timeout: float = 5.0) -> bool:
-    """Wait for COMMAND_ACK for the given command and report the result."""
+    """Wait for COMMAND_ACK, printing any STATUSTEXT (pre-arm reasons etc.) meanwhile."""
     deadline = time.time() + timeout
     while time.time() < deadline:
-        msg = master.recv_match(type='COMMAND_ACK', blocking=True, timeout=1.0)
-        if msg is None or msg.command != command:
+        msg = master.recv_match(type=['COMMAND_ACK', 'STATUSTEXT'], blocking=True, timeout=1.0)
+        if msg is None:
+            continue
+        if msg.get_type() == 'STATUSTEXT':
+            print(f"  FC: {msg.text}")
+            continue
+        if msg.command != command:
             continue
         result = mavutil.mavlink.enums['MAV_RESULT'][msg.result].name
         print(f"  COMMAND_ACK: {result}")
-        return msg.result == mavutil.mavlink.MAV_RESULT_ACCEPTED
+        if msg.result != mavutil.mavlink.MAV_RESULT_ACCEPTED:
+            # Reasons often arrive just after the ACK - keep listening briefly
+            end = time.time() + 2.0
+            while time.time() < end:
+                st = master.recv_match(type='STATUSTEXT', blocking=True, timeout=0.5)
+                if st:
+                    print(f"  FC: {st.text}")
+            return False
+        return True
     print("  no COMMAND_ACK received")
     return False
 
@@ -148,7 +161,8 @@ def main() -> int:
 
     master = client.master
     print(f"Connected: system {master.target_system}, component {master.target_component}")
-
+    if master.target_component == 0:
+        master.target_component = 1
     commands = AutopilotCommands(master)
 
     # 2 - Send the command and check that ArduPilot accepted it
