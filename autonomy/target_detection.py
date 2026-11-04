@@ -18,6 +18,8 @@ class TargetDetector:
         self.target_pixel_x = 0.0 # Actual pixel X coordinate of the detected target's center
         self.target_bbox_height = 0.0 # Bounding box height in pixels (proxy for distance)
         self._last_frame = None # Most recent annotated frame for display
+        self.follow_enabled = True # Local detector has no operator switch (RemoteTargetDetector does)
+        self.locked_id = None # Local detector does not track identities
 
     def update(self):
         ret, frame = self.cap.read() # Read a frame from the camera

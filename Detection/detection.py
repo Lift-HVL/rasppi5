@@ -22,17 +22,38 @@ What is sent (both UDP, to --host):
   "frame" is the id of the video frame YOLO looked at, so the viewer can match boxes to video.
   Boxes are in camera pixels ("width" x "height"), the video is resized: scale on the receiver.
   "offset" is the box center relative to the image middle, -1..1 (dx > 0 = right, dy > 0 = below).
+
+Tracking and picking one person (on by default, --no-track turns it off):
+  YOLO runs with a tracker (ByteTrack/BoT-SORT), so every box also has a stable "track_id"
+  (null while the tracker has not confirmed it). The detection message gets three more fields:
+    "locked_id": the track id the operator picked (or null), "lock_state": idle | tracking | lost,
+    "follow": true while the operator has following switched on.
+  The operator picks a person in gs_viewer.py, which sends JSON to --control-port (default 5011):
+    {"type": "track", "action": "lock", "track_id": 3}
+    {"type": "track", "action": "release"}
+    {"type": "track", "action": "follow", "enabled": true}   # repeat every <1 s: dead-man's switch,
+                                                             # following stops after --follow-timeout
+  If the locked person disappears, a new track id that looks like them (clothes colour) close to
+  where they were is accepted for --reacquire seconds; after that the lock is released.
+
+  Only the locked person goes to the drone's autonomy loop (this machine, 127.0.0.1:--autonomy-port,
+  default 5012) - one packet per YOLO run, also when nobody is locked (it doubles as a heartbeat):
+    {"type": "target", "timestamp": ..., "frame": 123, "width": 1280, "height": 720,
+     "locked_id": 3, "state": "tracking", "detected": true, "conf": 0.91, "box": [x1, y1, x2, y2],
+     "follow": true}
 """
 
 import argparse
 import glob
 import json
+import math
 import socket
 import struct
 import threading
 import time
 
 import cv2
+import numpy as np
 from ultralytics import YOLO
 
 HEADER = struct.Struct("!2sIHHH")
@@ -187,6 +208,149 @@ class CameraThread(threading.Thread):
 
 
 # ---------------------------------------------------------------------------
+# Picking one person: the lock
+# ---------------------------------------------------------------------------
+
+def appearance(frame, box):
+    """Colour fingerprint of a person: HSV histogram of the middle of the box (less background)."""
+    x1, y1, x2, y2 = box
+    w, h = x2 - x1, y2 - y1
+    x1, x2 = int(x1 + 0.2 * w), int(x2 - 0.2 * w)
+    y1, y2 = int(y1 + 0.15 * h), int(y2 - 0.15 * h)
+    x1, y1 = max(x1, 0), max(y1, 0)
+    crop = frame[y1:y2, x1:x2]
+    if crop.shape[0] < 8 or crop.shape[1] < 8:
+        return None
+    hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
+    hist = cv2.calcHist([hsv], [0, 1], None, [16, 8], [0, 180, 0, 256])
+    return cv2.normalize(hist, hist, alpha=1.0, norm_type=cv2.NORM_L1)
+
+
+def iou(a, b) -> float:
+    ix = max(0, min(a[2], b[2]) - max(a[0], b[0]))
+    iy = max(0, min(a[3], b[3]) - max(a[1], b[1]))
+    inter = ix * iy
+    union = (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - inter
+    return inter / union if union > 0 else 0.0
+
+
+class TargetLock:
+    """The one person the operator picked. Survives tracker id changes by comparing appearance."""
+
+    def __init__(self, reacquire_s: float, min_similarity: float, follow_timeout: float):
+        self.reacquire_s = reacquire_s
+        self.min_similarity = min_similarity
+        self.follow_timeout = follow_timeout
+        self.release()
+
+    def release(self) -> None:
+        self.locked_id = None
+        self.state = "idle"            # idle | tracking | lost
+        self.name = None
+        self.hist = None
+        self.last_center = None
+        self.last_seen = 0.0
+        self.follow_until = 0.0
+
+    def lock(self, det: dict, now: float) -> None:
+        self.release()
+        self.locked_id = det["track_id"]
+        self.name = det["name"]
+        self.state = "tracking"
+        self.last_seen = now
+
+    def set_follow(self, enabled: bool, now: float) -> None:
+        # only meaningful with a lock; the keepalive from the ground station keeps it alive
+        self.follow_until = now + self.follow_timeout if enabled and self.locked_id is not None else 0.0
+
+    def follow(self, now: float) -> bool:
+        return self.locked_id is not None and self.state == "tracking" and now < self.follow_until
+
+    def update(self, dets: list, frame, now: float):
+        """Returns the detection of the locked person in this frame, or None. Sets det['locked']."""
+        if self.locked_id is None:
+            return None
+
+        found = next((d for d in dets if d["track_id"] == self.locked_id), None)
+        if found is None and self.state == "tracking":
+            self.state = "lost"
+        if found is None and self.state == "lost":
+            found = self._reacquire(dets, frame, now)
+
+        if found is None:
+            if now - self.last_seen > self.reacquire_s:
+                print(f"[LOCK] lost #{self.locked_id} for {self.reacquire_s:g} s - released")
+                self.release()
+            return None
+
+        self.state = "tracking"
+        self.last_seen = now
+        self.last_center = found["center"]
+        found["locked"] = True
+        # learn the look slowly, but not while someone stands in front of the person
+        if not any(o is not found and iou(o["box"], found["box"]) > 0.1 for o in dets):
+            hist = appearance(frame, found["box"])
+            if hist is not None:
+                if self.hist is None:
+                    self.hist = hist
+                else:
+                    self.hist = cv2.normalize(0.95 * self.hist + 0.05 * hist, None,
+                                              alpha=1.0, norm_type=cv2.NORM_L1)
+        return found
+
+    def _reacquire(self, dets: list, frame, now: float):
+        """The tracker gave the person a new id: accept a similar-looking one near where they went."""
+        if self.hist is None or self.last_center is None:
+            return None
+        h, w = frame.shape[:2]
+        gone = now - self.last_seen
+        max_dist = min(1.0, 0.25 + 0.1 * gone) * w        # allowed to wander further the longer they are gone
+        best, best_sim = None, self.min_similarity
+        for d in dets:
+            if d["track_id"] is None or d["track_id"] == self.locked_id or d["name"] != self.name:
+                continue
+            if math.dist(d["center"], self.last_center) > max_dist:
+                continue
+            hist = appearance(frame, d["box"])
+            if hist is None:
+                continue
+            sim = cv2.compareHist(self.hist, hist, cv2.HISTCMP_CORREL)
+            if sim >= best_sim:
+                best, best_sim = d, sim
+        if best is not None:
+            print(f"[LOCK] #{self.locked_id} -> #{best['track_id']} (look-alike {best_sim:.2f})")
+            self.locked_id = best["track_id"]
+        return best
+
+
+def handle_control(data: bytes, lock: TargetLock, dets: list, now: float) -> None:
+    """One packet from the ground station: lock / release / follow."""
+    try:
+        obj = json.loads(data)
+    except ValueError:
+        return
+    if not isinstance(obj, dict) or obj.get("type") != "track":
+        return
+    action = obj.get("action")
+    if action == "lock":
+        det = next((d for d in dets if d["track_id"] is not None and d["track_id"] == obj.get("track_id")), None)
+        if det is None:
+            print(f"[LOCK] ignored: no person with track id {obj.get('track_id')!r} in the last frame")
+            return
+        lock.lock(det, now)
+        print(f"[LOCK] locked #{det['track_id']} ({det['name']})")
+    elif action == "release":
+        if lock.locked_id is not None:
+            print(f"[LOCK] released #{lock.locked_id}")
+        lock.release()
+    elif action == "follow":
+        was = lock.follow(now)
+        lock.set_follow(bool(obj.get("enabled")), now)
+        if lock.follow(now) != was:               # silent when ignored (no lock) or just a keepalive
+            print(f"[LOCK] follow {'ON' if lock.follow(now) else 'OFF'}")
+
+
+# ---------------------------------------------------------------------------
 # Main loop: YOLO on the newest frame, send the boxes
 # ---------------------------------------------------------------------------
 
@@ -199,6 +363,21 @@ def main() -> None:
     p.add_argument("--conf", type=float, default=0.5, help="minimum confidence")
     p.add_argument("--imgsz", type=int, default=640,
                    help="YOLO input size; 320 or 416 is much faster on the Pi (multiple of 32)")
+    p.add_argument("--no-track", action="store_true", help="plain detection, no track ids and no picking")
+    p.add_argument("--tracker", default="bytetrack.yaml",
+                   help="bytetrack.yaml (light) or botsort.yaml (camera-motion compensation, heavier)")
+    p.add_argument("--classes", nargs="+", metavar="NAME",
+                   help="only detect/track these classes, e.g. --classes person (default: all the model knows)")
+    p.add_argument("--control-port", type=int, default=5011,
+                   help="UDP port for lock/release/follow from the ground station (0 = off)")
+    p.add_argument("--autonomy-port", type=int, default=5012,
+                   help="UDP port on 127.0.0.1 where the locked person is sent to the autonomy loop (0 = off)")
+    p.add_argument("--reacquire", type=float, default=10.0,
+                   help="seconds to look for the locked person after losing them, then release the lock")
+    p.add_argument("--similarity", type=float, default=0.5,
+                   help="how much a new track must look like the locked person to take over (0..1)")
+    p.add_argument("--follow-timeout", type=float, default=3.0,
+                   help="following stops this many seconds after the last 'follow' message from the ground station")
     p.add_argument("--source", default="0", help="camera index, /dev/videoN, video file or URL")
     p.add_argument("--cam-width", type=int, default=1280, help="resolution requested from the camera")
     p.add_argument("--cam-height", type=int, default=720)
@@ -218,6 +397,27 @@ def main() -> None:
         p.error("--host is required (the ground station's IP address)")
 
     model = YOLO(args.model)
+    class_ids = None
+    if args.classes:
+        by_name = {str(n).lower(): i for i, n in model.names.items()}
+        unknown = [c for c in args.classes if c.lower() not in by_name]
+        if unknown:
+            raise SystemExit(f"Model has no class {unknown} - it knows: {sorted(by_name)}")
+        class_ids = [by_name[c.lower()] for c in args.classes]
+
+    track = not args.no_track
+    lock = TargetLock(args.reacquire, args.similarity, args.follow_timeout)
+    control_sock = None
+    if track and args.control_port:
+        control_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            control_sock.bind(("0.0.0.0", args.control_port))
+        except OSError as e:
+            raise SystemExit(f"Could not listen for lock commands on UDP {args.control_port}: {e}")
+        control_sock.setblocking(False)
+        print(f"Lock commands <- UDP {args.control_port}")
+    autonomy_addr = ("127.0.0.1", args.autonomy_port) if track and args.autonomy_port else None
+
     cap = open_camera(args.source, args.cam_width, args.cam_height, args.cam_fps, not args.no_mjpg)
     video_addr = (args.host, args.video_port) if args.video_port else None
     det_addr = (args.host, args.det_port)
@@ -245,7 +445,12 @@ def main() -> None:
             h, w = frame.shape[:2]
 
             t0 = time.time()
-            r = model(frame, conf=args.conf, imgsz=args.imgsz, verbose=False)[0]
+            if track:
+                # persist=True: the tracker remembers the people from the previous frame
+                r = model.track(frame, persist=True, tracker=args.tracker, classes=class_ids,
+                                conf=args.conf, imgsz=args.imgsz, verbose=False)[0]
+            else:
+                r = model(frame, classes=class_ids, conf=args.conf, imgsz=args.imgsz, verbose=False)[0]
             inference_ms = (time.time() - t0) * 1000
 
             detections = []
@@ -254,6 +459,7 @@ def main() -> None:
                 cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
                 detections.append({
                     "id": i,
+                    "track_id": int(box.id[0]) if box.id is not None else None,
                     "name": r.names[int(box.cls[0])],
                     "conf": round(float(box.conf[0].item()), 3),
                     "box": [round(x1), round(y1), round(x2), round(y2)],
@@ -261,8 +467,21 @@ def main() -> None:
                     "offset": [round(2 * cx / w - 1, 3), round(2 * cy / h - 1, 3)],
                 })
 
-            msg = {"type": "detections", "timestamp": time.time(), "frame": fid,
+            now = time.time()
+            if control_sock is not None:
+                while True:                       # lock / release / follow from the ground station
+                    try:
+                        data, _ = control_sock.recvfrom(4096)
+                    except (BlockingIOError, InterruptedError):
+                        break
+                    except OSError:
+                        break
+                    handle_control(data, lock, detections, now)
+            target = lock.update(detections, frame, now) if track else None
+
+            msg = {"type": "detections", "timestamp": now, "frame": fid,
                    "width": w, "height": h, "inference_ms": round(inference_ms, 1),
+                   "locked_id": lock.locked_id, "lock_state": lock.state, "follow": lock.follow(now),
                    "detections": detections}
             try:
                 det_sock.sendto(json.dumps(msg).encode(), det_addr)
@@ -272,8 +491,21 @@ def main() -> None:
                     print(f"[DET] send failed: {e}")
                     last_error = str(e)
 
+            if autonomy_addr:                     # only the locked person goes to the flight logic
+                feed = {"type": "target", "timestamp": now, "frame": fid, "width": w, "height": h,
+                        "locked_id": lock.locked_id, "state": lock.state,
+                        "detected": target is not None, "follow": lock.follow(now)}
+                if target is not None:
+                    feed["conf"], feed["box"] = target["conf"], target["box"]
+                try:
+                    det_sock.sendto(json.dumps(feed).encode(), autonomy_addr)
+                except OSError:
+                    pass                          # autonomy loop not running - fine
+
             for d in detections:
-                print(d["id"], d["name"], f"{d['conf']:.2f}", f"center ({d['center'][0]}, {d['center'][1]})")
+                tag = " <== LOCKED" if d.get("locked") else ""
+                print(d["id"], f"#{d['track_id']}", d["name"], f"{d['conf']:.2f}",
+                      f"center ({d['center'][0]}, {d['center'][1]})" + tag)
 
             runs += 1
             if time.time() - stats_t >= 5:

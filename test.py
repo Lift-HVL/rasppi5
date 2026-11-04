@@ -9,6 +9,14 @@ Connects to ArduPilot, then runs one non-blocking loop that:
 
 Commands: arm, disarm, takeoff, land, rtl, goto, motor_test, motor_test_stop
 
+Following a picked person (needs Detection/detection.py running on the Pi, config.DETECTOR_SOURCE='remote'):
+  the operator clicks a person in gs_viewer.py and presses 'f'. While detection.py reports a locked
+  person AND follow is on AND the drone is armed, >= 1 m up and already in GUIDED (takeoff/goto put it
+  there; this loop never switches mode itself, so a pilot who flips to LOITER/manual wins), it runs
+  the same TargetTracker as the FSM version (yaw to centre, keep the distance). Anything else - person
+  lost, follow off, window closed (dead-man's switch), detection.py stopped - stops the movement.
+  The packet gets a "target" block: detected, locked_id, lock_state, follow, following.
+
 Usage (on the Pi):
     python3 main2.py --gs 192.168.1.11
     python3 main2.py --gs 192.168.1.11 --port 5005 --rate 5 --connect /dev/ttyAMA0
@@ -26,8 +34,11 @@ from collections import deque
 
 from pymavlink import mavutil
 
+from autonomy.detector import create_detector
+from autonomy.track import TargetTracker
+from autopilot.commands import AutopilotCommands
 from autopilot.mavlink_client import MAVLinkClient
-from config import CONNECTION_STRING
+from config import CONNECTION_STRING, DETECTOR_SOURCE, FOLLOW_MODE, TRACK_UPDATE_RATE
 
 GROUND_STATION_IP = "192.168.1.11"   # backend address - override with --gs
 GROUND_STATION_PORT = 5005
@@ -366,6 +377,50 @@ class CommandHandler:
 
 
 # ---------------------------------------------------------------------------
+# Following the person picked in the ground station
+# ---------------------------------------------------------------------------
+
+FOLLOW_MIN_ALT_M = 1.0       # never push the drone around while it is on the ground
+
+
+class Follower:
+    def __init__(self, master, telem: Telemetry):
+        self.telem = telem
+        self.detector = create_detector()
+        self.commands = AutopilotCommands(master)
+        self.tracker = TargetTracker(self.detector, self.commands, follow=FOLLOW_MODE)
+        self.following = False
+        self.next_step = 0.0
+
+    def _airborne(self) -> bool:
+        pos = self.telem.last.get("GLOBAL_POSITION_INT")
+        return bool(self.telem.armed and pos and pos.relative_alt / 1000 >= FOLLOW_MIN_ALT_M)
+
+    def step(self, now: float) -> None:
+        self.detector.update()                       # drain the feed from detection.py every loop
+        if now < self.next_step:
+            return
+        self.next_step = now + TRACK_UPDATE_RATE
+
+        d = self.detector
+        # Only in GUIDED, and never switching to it ourselves: if the pilot flips to LOITER/manual
+        # the following stops at once instead of fighting for control.
+        want = d.target_detected and d.follow_enabled and self._airborne() and self.telem.mode == "GUIDED"
+        if want:
+            self.tracker.update()
+        elif self.following:
+            self.tracker.stop()
+        if want != self.following:
+            print(f"[FOLLOW] {'start' if want else 'stop'} (lock #{d.locked_id})")
+        self.following = want
+
+    def status(self) -> dict:
+        d = self.detector
+        return {"detected": d.target_detected, "locked_id": d.locked_id, "lock_state": d.lock_state,
+                "follow": d.follow_enabled, "following": self.following}
+
+
+# ---------------------------------------------------------------------------
 # Main loop
 # ---------------------------------------------------------------------------
 
@@ -376,6 +431,7 @@ def run(master, gs_addr, rate_hz: float) -> None:
 
     telem = Telemetry(master)
     cmds = CommandHandler(master, sock, telem)
+    follower = Follower(master, telem) if DETECTOR_SOURCE == "remote" else None
 
     period = 1.0 / rate_hz
     next_send = 0.0
@@ -410,11 +466,18 @@ def run(master, gs_addr, rate_hz: float) -> None:
             cmds.handle(data, addr)
         cmds.check_timeouts()
 
+        # 2.5 - follow the person locked in gs_viewer (only while the operator has follow on)
+        if follower:
+            follower.step(now)
+
         # 3 - telemetry
         if now >= next_send:
             next_send = now + period
             try:
-                payload = json.dumps(clean(telem.build()), allow_nan=False)
+                packet = telem.build()
+                if follower:
+                    packet["target"] = follower.status()
+                payload = json.dumps(clean(packet), allow_nan=False)
                 sock.sendto(payload.encode(), gs_addr)
                 last_send_error = None
             except OSError as e:

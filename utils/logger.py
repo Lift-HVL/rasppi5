@@ -1,12 +1,17 @@
 """Logger utility for handling logging functionality."""
 
+from __future__ import annotations
+
 import time
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from autonomy.target_detection import TargetDetector
 from autopilot.vehicle_state import VehicleState
 from config import LOG_DIR
 from fsm.controller import FSMController
+
+if TYPE_CHECKING:   # type hint only - importing it would load ultralytics even when the camera is elsewhere
+    from autonomy.target_detection import TargetDetector
 
 
 class Logger:

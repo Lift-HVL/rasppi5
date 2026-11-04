@@ -22,6 +22,17 @@ LOW_BATTERY_THRESHOLD = 20
 CRITICAL_BATTERY_THRESHOLD = 10
 MIN_SATELLITES = 6
 
+# Where the autonomy loop gets its target from:
+#   'remote' - the person locked in the ground station (Detection/detection.py owns the camera + YOLO
+#              and tracks; the autonomy loop only reads the locked target over local UDP)
+#   'local'  - autonomy/target_detection.py opens the camera itself (cannot run together with detection.py)
+DETECTOR_SOURCE = os.environ.get('DETECTOR_SOURCE', 'remote')
+TARGET_FEED_PORT = 5012      # detection.py -> autonomy (127.0.0.1): locked target, every YOLO run
+TARGET_FEED_TIMEOUT = 1.0    # s without a feed packet before the target counts as lost
+TRACK_CONTROL_PORT = 5011    # ground station -> detection.py: lock / release / follow
+FOLLOW_MODE = DETECTOR_SOURCE == 'remote'  # keep following instead of stopping when "within reach"
+TRACK_UPDATE_RATE = 0.1      # s - loop period while tracking (UPDATE_RATE is too slow for the PI regulator)
+
 # Autonomy model
 YOLO_MODEL_PATH = 'models/yolov8m.pt'  # Path to the YOLO model for target detection
 

@@ -46,6 +46,12 @@ All tunable parameters are in `config.py`:
 | `CRITICAL_BATTERY_THRESHOLD` | `10` | % battery for failsafe |
 | `YOLO_MODEL_PATH` | `yolov8m.pt` | Model file (also `my_model.pt` available) |
 
+## Following one picked person
+
+`Detection/detection.py` (Pi) owns the camera: YOLO + tracker (track ids), video and boxes to the ground station. `Detection/gs_viewer.py` (ground) shows them; click a person = lock, `x` = release, `f` = follow on/off (keepalive every 0.5 s, dead-man's switch). Lock/follow go to the Pi on UDP 5011. `detection.py` re-acquires the person after an id change by clothes colour, and sends ONLY the locked person to the autonomy loop on `127.0.0.1:5012`. The loop (`telemetri.py` = FSM, `test.py` = command link) reads it through `autonomy/remote_target.py` (`config.DETECTOR_SOURCE='remote'`, the default; `DETECTOR_SOURCE=local` env var restores the old own-camera `TargetDetector`) and `TargetTracker(follow=True)` keeps following instead of ending at "within reach". `main.py` is not wired to this.
+
+Pi: `python Detection/detection.py --host <gs-ip> --source /dev/video0 --model Detection/best.pt --classes person` then `python telemetri.py` (or `test.py --gs <ip>`). Ground: `python Detection/gs_viewer.py`.
+
 ## Current Development State
 
 - Target detection pipeline works end-to-end.

@@ -6,7 +6,7 @@ import time
 import socket
 import json
 
-from autonomy.target_detection import TargetDetector
+from autonomy.detector import create_detector
 from autonomy.track import TargetTracker
 
 from autopilot.mavlink_client import MAVLinkClient
@@ -18,7 +18,7 @@ from fsm.event_generator import EventGenerator
 from fsm.event import Event
 from fsm.states import State, Autonomy
 
-from config import UPDATE_RATE
+from config import UPDATE_RATE, TRACK_UPDATE_RATE, FOLLOW_MODE
 
 import math
 from collections import deque
@@ -197,6 +197,9 @@ def build_telemetry(vehicle_state, fsm, detector) -> dict:
         "target": {
             "detected": detector.target_detected,
             "confidence": detector.target_confidence if detector.target_detected else 0.0,
+            "locked_id": getattr(detector, "locked_id", None),
+            "lock_state": getattr(detector, "lock_state", None),
+            "follow": getattr(detector, "follow_enabled", None),
         },
     }
 
@@ -236,8 +239,9 @@ def main() -> None:
     event_generator = EventGenerator()
 
     # 6 - Target detector and tracker
-    target_detector = TargetDetector()
-    tracker = TargetTracker(target_detector, commands)
+    # 'remote' (default): the person picked in gs_viewer.py via Detection/detection.py - see config.DETECTOR_SOURCE
+    target_detector = create_detector()
+    tracker = TargetTracker(target_detector, commands, follow=FOLLOW_MODE)
 
     # 7 - Logger
     logger = Logger()
@@ -247,6 +251,9 @@ def main() -> None:
     print("Controls: [s] start search  [l] land  [r] reset from failsafe  [q] quit")
 
     print("System initialized...")
+
+    was_tracking = False
+    last_status = 0.0
 
     while True:
         loop_start = time.time()
@@ -289,7 +296,20 @@ def main() -> None:
         # ----------------------------------
         # 4 - Execute autonomy behaviour for current state
         # ----------------------------------
-        if target_detector.target_detected and fsm.current_state == State.AUTONOMY and fsm.current_autonomy == Autonomy.TRACK:
+        # Move only while the operator has following switched on (gs_viewer 'f'); the local
+        # TargetDetector has no such switch and always says True.
+        tracking = (
+            target_detector.target_detected
+            and target_detector.follow_enabled
+            and fsm.current_state == State.AUTONOMY
+            and fsm.current_autonomy == Autonomy.TRACK
+        )
+        if was_tracking and not tracking:
+            tracker.stop()                      # target lost / follow off / left TRACK: stop turning and moving
+            print("[TRACK] stopped")
+        was_tracking = tracking
+
+        if tracking:
             if vehicle_state.mode != "GUIDED":  
                 commands.guided()
             else:
@@ -304,20 +324,23 @@ def main() -> None:
         def _fmt(v, spec=".1f"):
             return format(v, spec) if isinstance(v, (int, float)) else "n/a"
 
-        print(
-            f"[STATUS] \n"
-            f"fsm = {fsm.current_state.name} \n"
-            f"auto = {fsm.current_autonomy.name if fsm.current_autonomy else 'None'} \n"
-            f"armed = {vehicle_state.armed} \n"
-            f"mode = {vehicle_state.mode} \n"
-            f"alt = {vehicle_state.altitude_relative_m:.1f} m \n"
-            f"roll/pitch = {_fmt(vehicle_state.roll_deg)} / {_fmt(vehicle_state.pitch_deg)} deg \n"
-            f"gps_ok = {vehicle_state.gps_ok} \n"
-            f"battery = {vehicle_state.battery_remaining_pct} % \n"
-            f"prearm_ok = {vehicle_state.prearm_ok} \n"
-            f"target = {target_detector.target_position if target_detector.target_detected else 'None'} \n"
-            f"msgs = {processed_count}"
-        )
+        if loop_start - last_status >= UPDATE_RATE:     # the loop runs faster than this while in AUTONOMY
+            last_status = loop_start
+            print(
+                f"[STATUS] \n"
+                f"fsm = {fsm.current_state.name} \n"
+                f"auto = {fsm.current_autonomy.name if fsm.current_autonomy else 'None'} \n"
+                f"armed = {vehicle_state.armed} \n"
+                f"mode = {vehicle_state.mode} \n"
+                f"alt = {vehicle_state.altitude_relative_m:.1f} m \n"
+                f"roll/pitch = {_fmt(vehicle_state.roll_deg)} / {_fmt(vehicle_state.pitch_deg)} deg \n"
+                f"gps_ok = {vehicle_state.gps_ok} \n"
+                f"battery = {vehicle_state.battery_remaining_pct} % \n"
+                f"prearm_ok = {vehicle_state.prearm_ok} \n"
+                f"target = {target_detector.target_position if target_detector.target_detected else 'None'} "
+                f"(lock #{target_detector.locked_id}, follow {target_detector.follow_enabled}) \n"
+                f"msgs = {processed_count}"
+            )
 
         # ----------------------------------
         # 5.5 - Send status to ground station (Mac) over UDP
@@ -337,7 +360,9 @@ def main() -> None:
         # 6 - Keep loop timing stable
         # ----------------------------------
         elapsed = time.time() - loop_start
-        sleep_time = max(0.0, UPDATE_RATE - elapsed)
+        # Faster loop in AUTONOMY: the PI yaw regulator and the lock event need more than 1 Hz
+        period = TRACK_UPDATE_RATE if fsm.current_state == State.AUTONOMY else UPDATE_RATE
+        sleep_time = max(0.0, period - elapsed)
         time.sleep(sleep_time)
 
 if __name__ == '__main__':
