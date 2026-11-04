@@ -28,13 +28,20 @@ Tracking and picking one person (on by default, --no-track turns it off):
   (null while the tracker has not confirmed it). The detection message gets three more fields:
     "locked_id": the track id the operator picked (or null), "lock_state": idle | tracking | lost,
     "follow": true while the operator has following switched on.
-  The operator picks a person in gs_viewer.py, which sends JSON to --control-port (default 5011):
+  The operator picks a person in gs_viewer.py or in the ground-station-frontend. Both send JSON, to
+  --control-port (default 5011), or - through NAT, the way the frontend does it - back to this machine
+  from where the detection packets come (the backend answers to the sender of every detection packet):
     {"type": "track", "action": "lock", "track_id": 3}
+    {"type": "track", "action": "lock_at", "x": 0.42, "y": 0.61}   # a click on the video, 0..1 of the picture
     {"type": "track", "action": "release"}
     {"type": "track", "action": "follow", "enabled": true}   # repeat every <1 s: dead-man's switch,
                                                              # following stops after --follow-timeout
   If the locked person disappears, a new track id that looks like them (clothes colour) close to
   where they were is accepted for --reacquire seconds; after that the lock is released.
+
+  Video for the web frontend: an MJPEG stream with the boxes (locked person in green) drawn in is served at
+  http://<pi>:8080/stream.mjpg (--stream-port, 0 = off). It only encodes while someone is watching.
+  The frontend gets the detections from the backend, so use --video-port 0 unless gs_viewer.py also runs.
 
   Only the locked person goes to the drone's autonomy loop (this machine, 127.0.0.1:--autonomy-port,
   default 5012) - one packet per YOLO run, also when nobody is locked (it doubles as a heartbeat):
@@ -51,6 +58,7 @@ import socket
 import struct
 import threading
 import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import cv2
 import numpy as np
@@ -208,6 +216,146 @@ class CameraThread(threading.Thread):
 
 
 # ---------------------------------------------------------------------------
+# MJPEG stream for the web frontend: video with the boxes drawn in
+# ---------------------------------------------------------------------------
+
+LOCK_BGR = (0, 255, 0)
+OTHER_BGR = (0, 191, 255)
+
+
+class Overlay:
+    """What the stream draws on top of the video: the newest boxes and the lock state."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._snap = None
+
+    def set(self, snap: dict) -> None:
+        with self._lock:
+            self._snap = snap
+
+    def get(self):
+        with self._lock:
+            return self._snap
+
+
+def draw_overlay(img, snap, max_age: float = 1.0) -> None:
+    """Boxes (scaled from camera pixels to img) + a status banner. Boxes older than max_age are not shown."""
+    if not snap or time.time() - snap["time"] > max_age:
+        return
+    h, w = img.shape[:2]
+    sx, sy = w / snap["width"], h / snap["height"]
+    for d in snap["detections"]:
+        x1, y1, x2, y2 = d["box"]
+        p1, p2 = (int(x1 * sx), int(y1 * sy)), (int(x2 * sx), int(y2 * sy))
+        tid = d["track_id"]
+        locked = tid is not None and tid == snap["locked_id"]
+        color = LOCK_BGR if locked else OTHER_BGR
+        cv2.rectangle(img, p1, p2, color, 4 if locked else 2)
+        label = f"{'LOCKED ' if locked else ''}{d['name']}{f' #{tid}' if tid is not None else ''} {d['conf']:.2f}"
+        (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
+        ty = max(p1[1], th + 6)
+        cv2.rectangle(img, (p1[0], ty - th - 6), (p1[0] + tw + 6, ty), color, -1)
+        cv2.putText(img, label, (p1[0] + 3, ty - 4), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1)
+    if snap["locked_id"] is not None:
+        text = f"LOCK #{snap['locked_id']} {snap['state']}" + (" | FOLLOWING" if snap["follow"] else "")
+        cv2.rectangle(img, (0, 0), (w, 22), (0, 0, 0), -1)
+        cv2.putText(img, text, (6, 16), cv2.FONT_HERSHEY_SIMPLEX, 0.5, LOCK_BGR, 1)
+
+
+class StreamServer:
+    """HTTP: /stream.mjpg (multipart MJPEG, opened by an <img> in the browser) and / (a page showing it).
+    Frames are only encoded while at least one viewer is connected."""
+
+    def __init__(self, port: int, cam: CameraThread, overlay: Overlay, width: int, quality: int, fps: float):
+        self.port, self.cam, self.overlay = port, cam, overlay
+        self.width, self.quality = width, quality
+        self.period = 1.0 / fps if fps > 0 else 0.0
+        self.cond = threading.Condition()
+        self.jpeg = None
+        self.seq = 0
+        self.viewers = 0
+        self.running = True
+        server = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *args):          # no line per request
+                pass
+
+            def do_GET(self):
+                path = self.path.split("?")[0]
+                if path == "/stream.mjpg":
+                    server.serve_stream(self)
+                elif path in ("/", "/index.html"):
+                    page = (b'<!doctype html><meta charset="utf-8"><body style="margin:0;background:#020617">'
+                            b'<img src="/stream.mjpg" style="width:100%;height:100vh;object-fit:contain"></body>')
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/html")
+                    self.send_header("Content-Length", str(len(page)))
+                    self.end_headers()
+                    self.wfile.write(page)
+                else:
+                    self.send_error(404)
+
+        self.httpd = ThreadingHTTPServer(("0.0.0.0", port), Handler)
+        self.httpd.daemon_threads = True
+
+    def start(self) -> None:
+        threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
+        threading.Thread(target=self._encode_loop, daemon=True).start()
+
+    def stop(self) -> None:
+        self.running = False
+        self.httpd.shutdown()
+
+    def _encode_loop(self) -> None:
+        last_id, next_t = None, 0.0
+        while self.running:
+            if self.viewers == 0:
+                time.sleep(0.1)
+                last_id = None
+                continue
+            fid, frame = self.cam.latest()
+            if frame is None or fid == last_id or time.time() < next_t:
+                time.sleep(0.005)
+                continue
+            last_id, next_t = fid, time.time() + self.period
+            h, w = frame.shape[:2]
+            img = cv2.resize(frame, (self.width, round(h * self.width / w)), interpolation=cv2.INTER_AREA) \
+                if self.width and w > self.width else frame.copy()
+            draw_overlay(img, self.overlay.get())
+            ok, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, self.quality])
+            if ok:
+                with self.cond:
+                    self.jpeg, self.seq = buf.tobytes(), self.seq + 1
+                    self.cond.notify_all()
+
+    def serve_stream(self, h: BaseHTTPRequestHandler) -> None:
+        h.send_response(200)
+        h.send_header("Content-Type", "multipart/x-mixed-replace; boundary=frame")
+        h.send_header("Cache-Control", "no-cache, no-store")
+        h.send_header("Access-Control-Allow-Origin", "*")
+        h.end_headers()
+        seen = 0
+        with self.cond:
+            self.viewers += 1
+        try:
+            while self.running:
+                with self.cond:
+                    if not self.cond.wait_for(lambda: self.seq != seen, timeout=2.0):
+                        continue
+                    jpeg, seen = self.jpeg, self.seq
+                h.wfile.write(b"--frame\r\nContent-Type: image/jpeg\r\nContent-Length: %d\r\n\r\n" % len(jpeg))
+                h.wfile.write(jpeg)
+                h.wfile.write(b"\r\n")
+        except (BrokenPipeError, ConnectionError, OSError):
+            pass                                    # the viewer closed the page
+        finally:
+            with self.cond:
+                self.viewers -= 1
+
+
+# ---------------------------------------------------------------------------
 # Picking one person: the lock
 # ---------------------------------------------------------------------------
 
@@ -323,8 +471,23 @@ class TargetLock:
         return best
 
 
-def handle_control(data: bytes, lock: TargetLock, dets: list, now: float) -> None:
-    """One packet from the ground station: lock / release / follow."""
+def box_at(dets: list, px: float, py: float, frame_w: float):
+    """The tracked box under a click: the smallest one containing the point, else the nearest centre
+    within 8 % of the picture width (the person moved a little since the operator saw the frame)."""
+    tracked = [d for d in dets if d["track_id"] is not None]
+    inside = [d for d in tracked if d["box"][0] <= px <= d["box"][2] and d["box"][1] <= py <= d["box"][3]]
+    if inside:
+        return min(inside, key=lambda d: (d["box"][2] - d["box"][0]) * (d["box"][3] - d["box"][1]))
+    near = [(math.dist(d["center"], (px, py)), d["track_id"], d) for d in tracked]
+    if near:
+        dist, _, d = min(near, key=lambda t: t[:2])
+        if dist <= 0.08 * frame_w:
+            return d
+    return None
+
+
+def handle_control(data: bytes, lock: TargetLock, dets: list, now: float, size=None) -> None:
+    """One packet from the ground station: lock / lock_at / release / follow. size = (width, height) of the frame."""
     try:
         obj = json.loads(data)
     except ValueError:
@@ -332,10 +495,17 @@ def handle_control(data: bytes, lock: TargetLock, dets: list, now: float) -> Non
     if not isinstance(obj, dict) or obj.get("type") != "track":
         return
     action = obj.get("action")
-    if action == "lock":
-        det = next((d for d in dets if d["track_id"] is not None and d["track_id"] == obj.get("track_id")), None)
+    if action in ("lock", "lock_at"):
+        if action == "lock":
+            det = next((d for d in dets if d["track_id"] is not None and d["track_id"] == obj.get("track_id")), None)
+            what = f"track id {obj.get('track_id')!r}"
+        else:
+            x, y = obj.get("x"), obj.get("y")
+            ok = size and all(isinstance(v, (int, float)) and not isinstance(v, bool) and 0 <= v <= 1 for v in (x, y))
+            det = box_at(dets, x * size[0], y * size[1], size[0]) if ok else None
+            what = f"anyone at ({x!r}, {y!r})"
         if det is None:
-            print(f"[LOCK] ignored: no person with track id {obj.get('track_id')!r} in the last frame")
+            print(f"[LOCK] ignored: no tracked person for {what} in the last frame")
             return
         lock.lock(det, now)
         print(f"[LOCK] locked #{det['track_id']} ({det['name']})")
@@ -383,6 +553,8 @@ def main() -> None:
     p.add_argument("--cam-height", type=int, default=720)
     p.add_argument("--cam-fps", type=float, default=30)
     p.add_argument("--no-mjpg", action="store_true", help="don't ask the camera for MJPG")
+    p.add_argument("--stream-port", type=int, default=8080,
+                   help="HTTP port for the MJPEG stream with boxes drawn in, for the web frontend (0 = off)")
     p.add_argument("--video-width", type=int, default=640, help="width of the video sent")
     p.add_argument("--video-fps", type=float, default=20, help="maximum video frame rate sent")
     p.add_argument("--quality", type=int, default=70, help="JPEG quality 1-100")
@@ -429,6 +601,19 @@ def main() -> None:
     cam.start()
     print(f"Video -> {args.host}:{args.video_port}" if video_addr else "Video off")
     print(f"Detections -> {det_addr[0]}:{det_addr[1]}")
+    # Replies from the backend (lock/release/follow) come back to this socket's address, which is what makes
+    # them work through NAT - so it must be readable without blocking the YOLO loop
+    det_sock.setblocking(False)
+
+    overlay = Overlay()
+    stream = None
+    if args.stream_port:
+        try:
+            stream = StreamServer(args.stream_port, cam, overlay, args.video_width, args.quality, args.video_fps)
+            stream.start()
+            print(f"Video with boxes -> http://<this machine>:{args.stream_port}/stream.mjpg")
+        except OSError as e:
+            print(f"[STREAM] could not listen on TCP {args.stream_port}: {e} - web video is off")
 
     last_id = None
     runs, stats_t = 0, time.time()
@@ -468,16 +653,20 @@ def main() -> None:
                 })
 
             now = time.time()
-            if control_sock is not None:
-                while True:                       # lock / release / follow from the ground station
+            # lock / lock_at / release / follow: from gs_viewer on --control-port, and from the backend on the
+            # socket the detections go out on
+            for sock in ((control_sock, det_sock) if track else ()):
+                while sock is not None:
                     try:
-                        data, _ = control_sock.recvfrom(4096)
+                        data, _ = sock.recvfrom(4096)
                     except (BlockingIOError, InterruptedError):
                         break
                     except OSError:
                         break
-                    handle_control(data, lock, detections, now)
+                    handle_control(data, lock, detections, now, (w, h))
             target = lock.update(detections, frame, now) if track else None
+            overlay.set({"time": now, "width": w, "height": h, "detections": detections,
+                         "locked_id": lock.locked_id, "state": lock.state, "follow": lock.follow(now)})
 
             msg = {"type": "detections", "timestamp": now, "frame": fid,
                    "width": w, "height": h, "inference_ms": round(inference_ms, 1),
@@ -519,6 +708,8 @@ def main() -> None:
     except KeyboardInterrupt:
         pass
     finally:
+        if stream is not None:
+            stream.stop()
         cam.running = False
         cam.join(timeout=1)
         cap.release()
