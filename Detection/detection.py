@@ -267,8 +267,10 @@ class StreamServer:
     """HTTP: /stream.mjpg (multipart MJPEG, opened by an <img> in the browser) and / (a page showing it).
     Frames are only encoded while at least one viewer is connected."""
 
-    def __init__(self, port: int, cam: CameraThread, overlay: Overlay, width: int, quality: int, fps: float):
+    def __init__(self, port: int, cam: CameraThread, overlay: Overlay, width: int, quality: int, fps: float,
+                 burn_in: bool = False):
         self.port, self.cam, self.overlay = port, cam, overlay
+        self.burn_in = burn_in
         self.width, self.quality = width, quality
         self.period = 1.0 / fps if fps > 0 else 0.0
         self.cond = threading.Condition()
@@ -323,7 +325,8 @@ class StreamServer:
             h, w = frame.shape[:2]
             img = cv2.resize(frame, (self.width, round(h * self.width / w)), interpolation=cv2.INTER_AREA) \
                 if self.width and w > self.width else frame.copy()
-            draw_overlay(img, self.overlay.get())
+            if self.burn_in:
+                draw_overlay(img, self.overlay.get())
             ok, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, self.quality])
             if ok:
                 with self.cond:
@@ -555,6 +558,8 @@ def main() -> None:
     p.add_argument("--no-mjpg", action="store_true", help="don't ask the camera for MJPG")
     p.add_argument("--stream-port", type=int, default=8080,
                    help="HTTP port for the MJPEG stream with boxes drawn in, for the web frontend (0 = off)")
+    p.add_argument("--burn-in", action="store_true",
+                   help="draw the boxes into the MJPEG video (default: clean video, the dashboard draws the boxes)")
     p.add_argument("--video-width", type=int, default=640, help="width of the video sent")
     p.add_argument("--video-fps", type=float, default=20, help="maximum video frame rate sent")
     p.add_argument("--quality", type=int, default=70, help="JPEG quality 1-100")
@@ -609,7 +614,8 @@ def main() -> None:
     stream = None
     if args.stream_port:
         try:
-            stream = StreamServer(args.stream_port, cam, overlay, args.video_width, args.quality, args.video_fps)
+            stream = StreamServer(args.stream_port, cam, overlay, args.video_width, args.quality, args.video_fps,
+                                  args.burn_in)
             stream.start()
             print(f"Video with boxes -> http://<this machine>:{args.stream_port}/stream.mjpg")
         except OSError as e:

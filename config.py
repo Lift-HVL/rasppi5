@@ -3,7 +3,7 @@ import os
 # Connection parameters
 # Production (air Pi -> flight controller serial): '/dev/ttyAMA0'
 # Ground-station bridge fan-out target: 'udpin:127.0.0.1:14552'
-CONNECTION_STRING = 'udpin:127.0.0.1:14551'
+CONNECTION_STRING = '/dev/ttyAMA0'  # TELEM1 (SERIAL1) on the flight controller; was 'udpin:127.0.0.1:14551' (bridge)
 BAUDRATE = 57600
 CONNECTION_TIMEOUT = 10.0  # seconds to wait for heartbeat before assuming no connection
 

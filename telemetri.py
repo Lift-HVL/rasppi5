@@ -52,12 +52,12 @@ EXTRA_FIELDS = [
 
 # Message -> rate (Hz) to ask ArduPilot for
 STREAMS = {
-    mavutil.mavlink.MAVLINK_MSG_ID_ATTITUDE: 10,
-    mavutil.mavlink.MAVLINK_MSG_ID_VFR_HUD: 4,
-    mavutil.mavlink.MAVLINK_MSG_ID_SYS_STATUS: 2,
-    mavutil.mavlink.MAVLINK_MSG_ID_GPS_RAW_INT: 2,
-    mavutil.mavlink.MAVLINK_MSG_ID_EKF_STATUS_REPORT: 2,
-    mavutil.mavlink.MAVLINK_MSG_ID_VIBRATION: 2,
+    mavutil.mavlink.MAVLINK_MSG_ID_ATTITUDE: 20,
+    mavutil.mavlink.MAVLINK_MSG_ID_VFR_HUD: 10,
+    mavutil.mavlink.MAVLINK_MSG_ID_SYS_STATUS: 10,
+    mavutil.mavlink.MAVLINK_MSG_ID_GPS_RAW_INT: 10,
+    mavutil.mavlink.MAVLINK_MSG_ID_EKF_STATUS_REPORT: 10,
+    mavutil.mavlink.MAVLINK_MSG_ID_VIBRATION: 10,
 }
 
 PREARM_BIT = mavutil.mavlink.MAV_SYS_STATUS_PREARM_CHECK
@@ -239,9 +239,12 @@ def main() -> None:
     event_generator = EventGenerator()
 
     # 6 - Target detector and tracker
-    # 'remote' (default): the person picked in gs_viewer.py via Detection/detection.py - see config.DETECTOR_SOURCE
+    # 'remote' (default): the person picked in the dashboard, sent by Detection/detection.py on 127.0.0.1:5012.
+    # DETECTOR_SOURCE=local: old own-camera detector.
     target_detector = create_detector()
     tracker = TargetTracker(target_detector, commands, follow=FOLLOW_MODE)
+    was_tracking = False
+    last_status = 0.0
 
     # 7 - Logger
     logger = Logger()
@@ -251,9 +254,6 @@ def main() -> None:
     print("Controls: [s] start search  [l] land  [r] reset from failsafe  [q] quit")
 
     print("System initialized...")
-
-    was_tracking = False
-    last_status = 0.0
 
     while True:
         loop_start = time.time()
@@ -296,51 +296,47 @@ def main() -> None:
         # ----------------------------------
         # 4 - Execute autonomy behaviour for current state
         # ----------------------------------
-        # Move only while the operator has following switched on (gs_viewer 'f'); the local
-        # TargetDetector has no such switch and always says True.
+        # Only follow while the operator has pressed Follow (dead-man's switch, see detection.py)
         tracking = (
             target_detector.target_detected
-            and target_detector.follow_enabled
+            and getattr(target_detector, "follow_enabled", True)
             and fsm.current_state == State.AUTONOMY
             and fsm.current_autonomy == Autonomy.TRACK
         )
-        if was_tracking and not tracking:
-            tracker.stop()                      # target lost / follow off / left TRACK: stop turning and moving
-            print("[TRACK] stopped")
-        was_tracking = tracking
-
         if tracking:
-            if vehicle_state.mode != "GUIDED":  
+            if vehicle_state.mode != "GUIDED":
                 commands.guided()
             else:
                 if tracker.update():
                     print("[TRACK] Target reached!")
                     fsm.handle_event(Event.TASK_COMPLETED)
             print(f"[TRACK] target={target_detector.target_position} error={target_detector.target_pixel_x - target_detector.center_x:.0f}px conf={target_detector.target_confidence:.2f}")
-            
+        elif was_tracking:
+            tracker.stop()  # target lost / follow off / left AUTONOMY: stop turning and moving
+        was_tracking = tracking
+
         # ----------------------------------
         # 5 - Debug output
         # ----------------------------------
         def _fmt(v, spec=".1f"):
             return format(v, spec) if isinstance(v, (int, float)) else "n/a"
 
-        if loop_start - last_status >= UPDATE_RATE:     # the loop runs faster than this while in AUTONOMY
-            last_status = loop_start
-            print(
-                f"[STATUS] \n"
-                f"fsm = {fsm.current_state.name} \n"
-                f"auto = {fsm.current_autonomy.name if fsm.current_autonomy else 'None'} \n"
-                f"armed = {vehicle_state.armed} \n"
-                f"mode = {vehicle_state.mode} \n"
-                f"alt = {vehicle_state.altitude_relative_m:.1f} m \n"
-                f"roll/pitch = {_fmt(vehicle_state.roll_deg)} / {_fmt(vehicle_state.pitch_deg)} deg \n"
-                f"gps_ok = {vehicle_state.gps_ok} \n"
-                f"battery = {vehicle_state.battery_remaining_pct} % \n"
-                f"prearm_ok = {vehicle_state.prearm_ok} \n"
-                f"target = {target_detector.target_position if target_detector.target_detected else 'None'} "
-                f"(lock #{target_detector.locked_id}, follow {target_detector.follow_enabled}) \n"
-                f"msgs = {processed_count}"
-            )
+        if loop_start - last_status >= 1.0:  # the loop runs at 10 Hz while tracking; don't flood the terminal
+          last_status = loop_start
+          print(
+            f"[STATUS] \n"
+            f"fsm = {fsm.current_state.name} \n"
+            f"auto = {fsm.current_autonomy.name if fsm.current_autonomy else 'None'} \n"
+            f"armed = {vehicle_state.armed} \n"
+            f"mode = {vehicle_state.mode} \n"
+            f"alt = {_fmt(vehicle_state.altitude_relative_m)} m \n"
+            f"roll/pitch = {_fmt(vehicle_state.roll_deg)} / {_fmt(vehicle_state.pitch_deg)} deg \n"
+            f"gps_ok = {vehicle_state.gps_ok} \n"
+            f"battery = {vehicle_state.battery_remaining_pct} % \n"
+            f"prearm_ok = {vehicle_state.prearm_ok} \n"
+            f"target = {target_detector.target_position if target_detector.target_detected else 'None'} \n"
+            f"msgs = {processed_count}"
+        )
 
         # ----------------------------------
         # 5.5 - Send status to ground station (Mac) over UDP
@@ -360,7 +356,6 @@ def main() -> None:
         # 6 - Keep loop timing stable
         # ----------------------------------
         elapsed = time.time() - loop_start
-        # Faster loop in AUTONOMY: the PI yaw regulator and the lock event need more than 1 Hz
         period = TRACK_UPDATE_RATE if fsm.current_state == State.AUTONOMY else UPDATE_RATE
         sleep_time = max(0.0, period - elapsed)
         time.sleep(sleep_time)
